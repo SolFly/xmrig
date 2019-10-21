@@ -24,6 +24,7 @@
 
 
 #include "backend/opencl/OclConfig.h"
+#include "backend/opencl/OclConfig_gen.h"
 #include "backend/opencl/wrappers/OclLib.h"
 #include "base/io/json/Json.h"
 #include "base/io/log/Log.h"
@@ -32,10 +33,10 @@
 
 namespace xmrig {
 
+
 static const char *kAMD         = "AMD";
 static const char *kCache       = "cache";
-static const char *kCn          = "cn";
-static const char *kCn2         = "cn/2";
+static const char *kDevicesHint = "devices-hint";
 static const char *kEnabled     = "enabled";
 static const char *kINTEL       = "INTEL";
 static const char *kLoader      = "loader";
@@ -43,51 +44,7 @@ static const char *kNVIDIA      = "NVIDIA";
 static const char *kPlatform    = "platform";
 
 
-#ifdef XMRIG_ALGO_CN_GPU
-static const char *kCnGPU = "cn/gpu";
-#endif
-
-#ifdef XMRIG_ALGO_CN_LITE
-static const char *kCnLite = "cn-lite";
-#endif
-
-#ifdef XMRIG_ALGO_CN_HEAVY
-static const char *kCnHeavy = "cn-heavy";
-#endif
-
-#ifdef XMRIG_ALGO_CN_PICO
-static const char *kCnPico = "cn-pico";
-#endif
-
-#ifdef XMRIG_ALGO_RANDOMX
-static const char *kRx    = "rx";
-static const char *kRxWOW = "rx/wow";
-#endif
-
-#ifdef XMRIG_ALGO_ARGON2
-//static const char *kArgon2     = "argon2";
-#endif
-
-
 extern template class Threads<OclThreads>;
-
-
-static size_t generate(const char *key, Threads<OclThreads> &threads, const Algorithm &algorithm, const std::vector<OclDevice> &devices)
-{
-    if (threads.has(key) || threads.isExist(algorithm)) {
-        return 0;
-    }
-
-    OclThreads profile;
-    for (const OclDevice &device : devices) {
-        device.generate(algorithm, profile);
-    }
-
-    const size_t count = profile.count();
-    threads.move(key, std::move(profile));
-
-    return count;
-}
 
 
 }
@@ -173,32 +130,13 @@ std::vector<xmrig::OclLaunchData> xmrig::OclConfig::get(const Miner *miner, cons
             continue;
         }
 
-#       ifdef XMRIG_ALGO_RANDOMX
-        auto dataset = algorithm.family() == Algorithm::RANDOM_X ? std::make_shared<OclRxDataset>() : nullptr;
-#       endif
-
         if (thread.threads().size() > 1) {
-            auto interleave = std::make_shared<OclInterleave>(thread.threads().size());
-
             for (int64_t affinity : thread.threads()) {
-                OclLaunchData data(miner, algorithm, *this, platform, thread, devices[thread.index()], affinity);
-                data.interleave = interleave;
-
-#               ifdef XMRIG_ALGO_RANDOMX
-                data.dataset = dataset;
-#               endif
-
-                out.emplace_back(std::move(data));
+                out.emplace_back(miner, algorithm, *this, platform, thread, devices[thread.index()], affinity);
             }
         }
         else {
-            OclLaunchData data(miner, algorithm, *this, platform, thread, devices[thread.index()], thread.threads().front());
-
-#           ifdef XMRIG_ALGO_RANDOMX
-            data.dataset = dataset;
-#           endif
-
-            out.emplace_back(std::move(data));
+            out.emplace_back(miner, algorithm, *this, platform, thread, devices[thread.index()], thread.threads().front());
         }
     }
 
@@ -214,17 +152,20 @@ void xmrig::OclConfig::read(const rapidjson::Value &value)
         m_loader    = Json::getString(value, kLoader);
 
         setPlatform(Json::getValue(value, kPlatform));
+        setDevicesHint(Json::getString(value, kDevicesHint));
 
-        if (isEnabled()) {
-            m_threads.read(value);
+        m_threads.read(value);
 
-            generate();
-        }
+        generate();
     }
-    else if (value.IsBool() && value.IsFalse()) {
-        m_enabled = false;
+    else if (value.IsBool()) {
+        m_enabled = value.GetBool();
+
+        generate();
     }
     else {
+        m_shouldSave = true;
+
         generate();
     }
 }
@@ -232,52 +173,43 @@ void xmrig::OclConfig::read(const rapidjson::Value &value)
 
 void xmrig::OclConfig::generate()
 {
+    if (!isEnabled() || m_threads.has("*")) {
+        return;
+    }
+
     if (!OclLib::init(loader())) {
         return;
     }
 
-    const auto devices = platform().devices();
+    const auto devices = m_devicesHint.empty() ? platform().devices() : filterDevices(platform().devices(), m_devicesHint);
     if (devices.empty()) {
         return;
     }
 
     size_t count = 0;
 
-    count += xmrig::generate(kCn, m_threads, Algorithm::CN_0, devices);
-    count += xmrig::generate(kCn2, m_threads, Algorithm::CN_2, devices);
-
-    if (!m_threads.isExist(Algorithm::CN_0)) {
-        m_threads.disable(Algorithm::CN_0);
-        count++;
-    }
-
-#   ifdef XMRIG_ALGO_CN_GPU
-    count += xmrig::generate(kCnGPU, m_threads, Algorithm::CN_GPU, devices);
-#   endif
-
-#   ifdef XMRIG_ALGO_CN_LITE
-    count += xmrig::generate(kCnLite, m_threads, Algorithm::CN_LITE_1, devices);
-
-    if (!m_threads.isExist(Algorithm::CN_LITE_0)) {
-        m_threads.disable(Algorithm::CN_LITE_0);
-        count++;
-    }
-#   endif
-
-#   ifdef XMRIG_ALGO_CN_HEAVY
-    count += xmrig::generate(kCnHeavy, m_threads, Algorithm::CN_HEAVY_0, devices);
-#   endif
-
-#   ifdef XMRIG_ALGO_CN_PICO
-    count += xmrig::generate(kCnPico, m_threads, Algorithm::CN_PICO_0, devices);
-#   endif
-
-#   ifdef XMRIG_ALGO_RANDOMX
-    count += xmrig::generate(kRx, m_threads, Algorithm::RX_0, devices);
-    count += xmrig::generate(kRxWOW, m_threads, Algorithm::RX_WOW, devices);
-#   endif
+    count += xmrig::generate<Algorithm::CN>(m_threads, devices);
+    count += xmrig::generate<Algorithm::CN_LITE>(m_threads, devices);
+    count += xmrig::generate<Algorithm::CN_HEAVY>(m_threads, devices);
+    count += xmrig::generate<Algorithm::CN_PICO>(m_threads, devices);
+    count += xmrig::generate<Algorithm::RANDOM_X>(m_threads, devices);
 
     m_shouldSave = count > 0;
+}
+
+
+void xmrig::OclConfig::setDevicesHint(const char *devicesHint)
+{
+    if (devicesHint == nullptr) {
+        return;
+    }
+
+    const auto indexes = String(devicesHint).split(',');
+    m_devicesHint.reserve(indexes.size());
+
+    for (const auto &index : indexes) {
+        m_devicesHint.push_back(strtoul(index, nullptr, 10));
+    }
 }
 
 

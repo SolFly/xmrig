@@ -22,42 +22,38 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef XMRIG_OCLINTERLEAVE_H
-#define XMRIG_OCLINTERLEAVE_H
 
-
-#include <memory>
-#include <mutex>
+#include "crypto/rx/RxConfig.h"
+#include "base/io/json/Json.h"
+#include "rapidjson/document.h"
 
 
 namespace xmrig {
 
+static const char *kInit = "init";
 
-class OclInterleave
+}
+
+
+rapidjson::Value xmrig::RxConfig::toJSON(rapidjson::Document &doc) const
 {
-public:
-    OclInterleave() = delete;
-    inline OclInterleave(size_t threads) : m_threads(threads) {}
+    using namespace rapidjson;
+    auto &allocator = doc.GetAllocator();
 
-    uint64_t adjustDelay(size_t id);
-    uint64_t resumeDelay(size_t id);
-    void setResumeCounter(uint32_t value);
-    void setRunTime(uint64_t time);
+    Value obj(kObjectType);
+    obj.AddMember(StringRef(kInit), m_threads, allocator);
 
-private:
-    const size_t m_threads;
-    double m_averageRunTime   = 0.0;
-    double m_threshold        = 0.95;
-    std::mutex m_mutex;
-    uint32_t m_resumeCounter  = 0;
-    uint64_t m_timestamp      = 0;
-};
+    return obj;
+}
 
 
-using OclInterleavePtr = std::shared_ptr<OclInterleave>;
+bool xmrig::RxConfig::read(const rapidjson::Value &value)
+{
+    if (value.IsObject()) {
+        m_threads = Json::getInt(value, kInit, m_threads);
 
+        return true;
+    }
 
-} /* namespace xmrig */
-
-
-#endif /* XMRIG_OCLINTERLEAVE_H */
+    return false;
+}

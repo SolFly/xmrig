@@ -4,7 +4,9 @@
  * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
  * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
+ * Copyright 2017-2019 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
+ * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
+ * Copyright 2018-2019 tevador     <tevador@gmail.com>
  * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
  * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
@@ -22,33 +24,43 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-#include "backend/opencl/runners/tools/OclRxDataset.h"
-#include "backend/opencl/wrappers/OclLib.h"
-#include "crypto/rx/Rx.h"
-#include "crypto/rx/RxDataset.h"
+#ifndef XMRIG_RX_NUMASTORAGE_H
+#define XMRIG_RX_NUMASTORAGE_H
 
 
-void xmrig::OclRxDataset::createBuffer(cl_context ctx, const Job &job, bool host)
+#include "backend/common/interfaces/IRxStorage.h"
+#include "base/tools/Object.h"
+
+
+#include <vector>
+
+
+namespace xmrig
 {
-    if (m_dataset) {
-        return;
-    }
-
-    cl_int ret;
-
-    if (host) {
-        auto dataset = Rx::dataset(job, 0);
-
-        m_dataset = OclLib::createBuffer(ctx, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, RxDataset::maxSize(), dataset->raw(), &ret);
-    }
-    else {
-        m_dataset = OclLib::createBuffer(ctx, CL_MEM_READ_ONLY, RxDataset::maxSize(), nullptr, &ret);
-    }
-}
 
 
-xmrig::OclRxDataset::~OclRxDataset()
+class RxNUMAStoragePrivate;
+
+
+class RxNUMAStorage : public IRxStorage
 {
-    OclLib::release(m_dataset);
-}
+public:
+    XMRIG_DISABLE_COPY_MOVE(RxNUMAStorage);
+
+    RxNUMAStorage(const std::vector<uint32_t> &nodeset);
+    ~RxNUMAStorage() override;
+
+protected:
+    RxDataset *dataset(const Job &job, uint32_t nodeId) const override;
+    std::pair<uint32_t, uint32_t> hugePages() const override;
+    void init(const RxSeed &seed, uint32_t threads, bool hugePages) override;
+
+private:
+    RxNUMAStoragePrivate *d_ptr;
+};
+
+
+} /* namespace xmrig */
+
+
+#endif /* XMRIG_RX_NUMASTORAGE_H */

@@ -55,6 +55,7 @@ set(HEADERS
    )
 
 set(HEADERS_CRYPTO
+    src/backend/common/interfaces/IMemoryPool.h
     src/crypto/cn/asm/CryptonightR_template.h
     src/crypto/cn/c_blake256.h
     src/crypto/cn/c_groestl.h
@@ -71,7 +72,9 @@ set(HEADERS_CRYPTO
     src/crypto/cn/skein_port.h
     src/crypto/cn/soft_aes.h
     src/crypto/common/Algorithm.h
+    src/crypto/common/Coin.h
     src/crypto/common/keccak.h
+    src/crypto/common/MemoryPool.h
     src/crypto/common/Nonce.h
     src/crypto/common/portable/mm_malloc.h
     src/crypto/common/VirtualMemory.h
@@ -108,10 +111,23 @@ set(SOURCES_CRYPTO
     src/crypto/cn/CnCtx.cpp
     src/crypto/cn/CnHash.cpp
     src/crypto/common/Algorithm.cpp
+    src/crypto/common/Coin.cpp
     src/crypto/common/keccak.cpp
+    src/crypto/common/MemoryPool.cpp
     src/crypto/common/Nonce.cpp
     src/crypto/common/VirtualMemory.cpp
    )
+
+if (WITH_HWLOC)
+    list(APPEND HEADERS_CRYPTO
+        src/crypto/common/NUMAMemoryPool.h
+        )
+
+    list(APPEND SOURCES_CRYPTO
+        src/crypto/common/NUMAMemoryPool.cpp
+        src/crypto/common/VirtualMemory_hwloc.cpp
+        )
+endif()
 
 if (WIN32)
     set(SOURCES_OS
@@ -143,7 +159,7 @@ else()
     endif()
 endif()
 
-if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+if (CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "Android")
     EXECUTE_PROCESS(COMMAND uname -o COMMAND tr -d '\n' OUTPUT_VARIABLE OPERATING_SYSTEM)
     if (OPERATING_SYSTEM MATCHES "Android")
         set(EXTRA_LIBS ${EXTRA_LIBS} log)

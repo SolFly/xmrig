@@ -35,6 +35,7 @@
 #include "backend/opencl/OclConfig.h"
 #include "backend/opencl/OclLaunchData.h"
 #include "backend/opencl/OclWorker.h"
+#include "backend/opencl/runners/tools/OclSharedState.h"
 #include "backend/opencl/wrappers/OclContext.h"
 #include "backend/opencl/wrappers/OclLib.h"
 #include "base/io/log/Log.h"
@@ -135,6 +136,10 @@ public:
             return printDisabled(RED_S " (failed to load OpenCL runtime)");
         }
 
+        if (platform.isValid()) {
+            return;
+        }
+
         platform = cl.platform();
         if (!platform.isValid()) {
             return printDisabled(RED_S " (selected OpenCL platform NOT found)");
@@ -150,7 +155,7 @@ public:
         for (const OclDevice &device : devices) {
             Log::print(GREEN_BOLD(" * ") WHITE_BOLD("%-13s") CYAN_BOLD("#%zu") YELLOW(" %s") " %s " WHITE_BOLD("%uMHz") " cu:" WHITE_BOLD("%u") " mem:" CYAN("%zu/%zu") " MB", "OPENCL GPU",
                        device.index(),
-                       device.hasTopology() ? device.topology().toString().data() : "n/a",
+                       device.topology().toString().data(),
                        device.printableName().data(),
                        device.clock(),
                        device.computeUnits(),
@@ -160,7 +165,7 @@ public:
     }
 
 
-    inline void start()
+    inline void start(const Job &job)
     {
         LOG_INFO("%s use profile " BLUE_BG(WHITE_BOLD_S " %s ") WHITE_BOLD_S " (" CYAN_BOLD("%zu") WHITE_BOLD(" threads)") " scratchpad " CYAN_BOLD("%zu KB"),
                  tag,
@@ -177,7 +182,7 @@ public:
                        CYAN_BOLD("%3u") " |" CYAN_BOLD("%3s") " |" CYAN_BOLD("%3u") " |" CYAN("%5zu") " | %s",
                        i,
                        data.thread.index(),
-                       data.device.hasTopology() ? data.device.topology().toString().data() : "n/a",
+                       data.device.topology().toString().data(),
                        data.thread.intensity(),
                        data.thread.worksize(),
                        data.thread.stridedIndex(),
@@ -189,6 +194,8 @@ public:
 
                     i++;
         }
+
+        OclSharedState::start(threads, job);
 
         status.start(threads.size());
         workers.start(threads);
@@ -285,7 +292,7 @@ void xmrig::OclBackend::printHashrate(bool details)
                     Hashrate::format(hashrate()->calc(i, Hashrate::MediumInterval), num + 8,     sizeof num / 3),
                     Hashrate::format(hashrate()->calc(i, Hashrate::LargeInterval),  num + 8 * 2, sizeof num / 3),
                     data.device.index(),
-                    data.device.hasTopology() ? data.device.topology().toString().data() : "n/a",
+                    data.device.topology().toString().data(),
                     data.device.printableName().data()
                     );
 
@@ -302,11 +309,14 @@ void xmrig::OclBackend::printHashrate(bool details)
 
 void xmrig::OclBackend::setJob(const Job &job)
 {
+    const OclConfig &cl = d_ptr->controller->config()->cl();
+    if (cl.isEnabled()) {
+        d_ptr->init(cl);
+    }
+
     if (!isEnabled()) {
         return stop();
     }
-
-    const OclConfig &cl = d_ptr->controller->config()->cl();
 
     std::vector<OclLaunchData> threads = cl.get(d_ptr->controller->miner(), job.algorithm(), d_ptr->platform, d_ptr->devices, tag);
     if (!d_ptr->threads.empty() && d_ptr->threads.size() == threads.size() && std::equal(d_ptr->threads.begin(), d_ptr->threads.end(), threads.begin())) {
@@ -322,7 +332,7 @@ void xmrig::OclBackend::setJob(const Job &job)
         return stop();
     }
 
-    if (!d_ptr->context.init(d_ptr->devices, threads, job)) {
+    if (!d_ptr->context.init(d_ptr->devices, threads)) {
         LOG_WARN("%s " RED_BOLD("disabled") YELLOW(" (OpenCL context unavailable)"), tag);
 
         return stop();
@@ -331,7 +341,7 @@ void xmrig::OclBackend::setJob(const Job &job)
     stop();
 
     d_ptr->threads = std::move(threads);
-    d_ptr->start();
+    d_ptr->start(job);
 }
 
 
@@ -363,6 +373,8 @@ void xmrig::OclBackend::stop()
 
     d_ptr->workers.stop();
     d_ptr->threads.clear();
+
+    OclSharedState::release();
 
     LOG_INFO("%s" YELLOW(" stopped") BLACK_BOLD(" (%" PRIu64 " ms)"), tag, Chrono::steadyMSecs() - ts);
 }
@@ -400,6 +412,8 @@ rapidjson::Value xmrig::OclBackend::toJSON(rapidjson::Document &doc) const
         Value thread = data.thread.toJSON(doc);
         thread.AddMember("affinity", data.affinity, allocator);
         thread.AddMember("hashrate", hashrate()->toJSON(i, doc), allocator);
+
+        data.device.toJSON(thread, doc);
 
         i++;
         threads.PushBack(thread, allocator);
