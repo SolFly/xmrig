@@ -1,36 +1,23 @@
 # Algorithms
 
-Since version 3 mining [algorithm](#algorithm-names) should specified for each pool separately (`algo` option), earlier versions was use one global `algo` option and per pool `variant` option (this option was removed in v3). If your pool support [mining algorithm negotiation](https://github.com/xmrig/xmrig-proxy/issues/168) you may not specify this option at all.
- 
-#### Example
-```json
-{
-  "pools": [
-    {
-      "url": "...",
-      "algo": "cn/r",
-      ...
-    }
- ],
- ...
-}
-```
+Algorithm can be defined in 3 ways:
 
-#### Pools with mining algorithm negotiation support.
+1. By pool, using algorithm negotiation, in this case no need specify algorithm on miner side.
+2. Per pool `coin` option, currently only usable values for this option is `monero` and `arqma`.
+3. Per pool `algo` option.
 
- * [www.hashvault.pro](https://www.hashvault.pro/)
- * [moneroocean.stream](https://moneroocean.stream)
- 
- ## Algorithm names
+Option `coin` useful for pools without algorithm negotiation support or daemon to allow automatically switch algorithm in next hard fork.
+
+## Algorithm names
 
 | Name | Memory | Version | Notes |
 |------|--------|---------|-------|
+| `rx/arq` | 256 KB | 4.3.0+ | RandomARQ (RandomX variant for ArQmA). |
+| `rx/0` | 2 MB | 3.2.0+ | RandomX (Monero). |
 | `argon2/chukwa` | 512 KB | 3.1.0+ | Argon2id (Chukwa). |
 | `argon2/wrkz` | 256 KB | 3.1.0+ | Argon2id (WRKZ) |
-| `rx/test` | 2 MB | 3.0.0+ | RandomX (reference configuration). |
-| `rx/0` | 2 MB | 3.0.0+ | RandomX (reference configuration), reserved for future use. |
-| `rx/wow` | 1 MB | 3.0.0+ | RandomWOW. |
-| `rx/loki` | 2 MB | 3.0.0+ | RandomXL. |
+| `rx/wow` | 1 MB | 3.0.0+ | RandomWOW (RandomX variant for Wownero). |
+| `rx/loki` | 2 MB | 3.0.0+ | RandomXL (RandomX variant for Loki). |
 | `cn/fast` | 2 MB | 3.0.0+ | CryptoNight variant 1 with half iterations. |
 | `cn/rwz` | 2 MB | 2.14.0+ | CryptoNight variant 2 with 3/4 iterations and reversed shuffle operation. |
 | `cn/zls` | 2 MB | 2.14.0+ | CryptoNight variant 2 with 3/4 iterations. |
@@ -50,3 +37,21 @@ Since version 3 mining [algorithm](#algorithm-names) should specified for each p
 | `cn-lite/1` | 1 MB | 2.5.0+ | CryptoNight-Lite variant 1. |
 | `cn-lite/0` | 1 MB | 0.8.0+ | CryptoNight-Lite variant 0. |
 | `cn/0` | 2 MB | 0.5.0+ | CryptoNight (original). |
+
+## Migration to v3
+Since version 3 mining [algorithm](#algorithm-names) should specified for each pool separately (`algo` option), earlier versions was use one global `algo` option and per pool `variant` option (this option was removed in v3). If your pool support [mining algorithm negotiation](https://github.com/xmrig/xmrig-proxy/issues/168) you may not specify this option at all.
+ 
+#### Example
+```json
+{
+  "pools": [
+    {
+      "url": "...",
+      "algo": "cn/r",
+      "coin": null
+      ...
+    }
+ ],
+ ...
+}
+```
