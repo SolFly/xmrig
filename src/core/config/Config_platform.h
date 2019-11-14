@@ -45,6 +45,7 @@ static const char short_options[] = "a:c:kBp:Px:r:R:s:t:T:o:u:O:v:l:S";
 
 static const option options[] = {
     { "algo",                  1, nullptr, IConfig::AlgorithmKey          },
+    { "coin",                  1, nullptr, IConfig::CoinKey               },
 #   ifdef XMRIG_FEATURE_HTTP
     { "api-worker-id",         1, nullptr, IConfig::ApiWorkerIdKey        },
     { "api-id",                1, nullptr, IConfig::ApiIdKey              },
@@ -55,6 +56,7 @@ static const option options[] = {
     { "http-no-restricted",    0, nullptr, IConfig::HttpRestrictedKey     },
     { "daemon",                0, nullptr, IConfig::DaemonKey             },
     { "daemon-poll-interval",  1, nullptr, IConfig::DaemonPollKey         },
+    { "self-select",           1, nullptr, IConfig::SelfSelectKey         },
 #   endif
     { "av",                    1, nullptr, IConfig::AVKey                 },
     { "background",            0, nullptr, IConfig::BackgroundKey         },
@@ -81,6 +83,9 @@ static const option options[] = {
     { "userpass",              1, nullptr, IConfig::UserpassKey           },
     { "rig-id",                1, nullptr, IConfig::RigIdKey              },
     { "no-cpu",                0, nullptr, IConfig::CPUKey                },
+    { "max-cpu-usage",         1, nullptr, IConfig::CPUMaxThreadsKey      },
+    { "cpu-max-threads-hint",  1, nullptr, IConfig::CPUMaxThreadsKey      },
+    { "cpu-memory-pool",       1, nullptr, IConfig::MemoryPoolKey         },
 #   ifdef XMRIG_FEATURE_TLS
     { "tls",                   0, nullptr, IConfig::TlsKey                },
     { "tls-fingerprint",       1, nullptr, IConfig::FingerprintKey        },
@@ -95,13 +100,18 @@ static const option options[] = {
 #   ifdef XMRIG_FEATURE_OPENCL
     { "opencl",                0, nullptr, IConfig::OclKey                },
     { "opencl-devices",        1, nullptr, IConfig::OclDevicesKey         },
-    { "opencl-launch",         1, nullptr, IConfig::OclLaunchKey          },
-    { "opencl-strided-index",  1, nullptr, IConfig::OclSridedIndexKey     },
-    { "opencl-mem-chunk",      1, nullptr, IConfig::OclMemChunkKey        },
-    { "opencl-affinity",       1, nullptr, IConfig::OclAffinityKey        },
     { "opencl-platform",       1, nullptr, IConfig::OclPlatformKey        },
     { "opencl-loader",         1, nullptr, IConfig::OclLoaderKey          },
     { "opencl-no-cache",       0, nullptr, IConfig::OclCacheKey           },
+#   endif
+#   ifdef XMRIG_FEATURE_CUDA
+    { "cuda",                  0, nullptr, IConfig::CudaKey               },
+    { "cuda-loader",           1, nullptr, IConfig::CudaLoaderKey         },
+    { "cuda-devices",          1, nullptr, IConfig::CudaDevicesKey        },
+#   endif
+#   ifdef XMRIG_FEATURE_NVML
+    { "no-nvml",               0, nullptr, IConfig::NvmlKey               },
+    { "health-print-time",     1, nullptr, IConfig::HealthPrintTimeKey    },
 #   endif
     { nullptr,                 0, nullptr, 0 }
 };

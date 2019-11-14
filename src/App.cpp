@@ -36,7 +36,6 @@
 #include "core/config/Config.h"
 #include "core/Controller.h"
 #include "core/Miner.h"
-#include "crypto/common/VirtualMemory.h"
 #include "net/Network.h"
 #include "Summary.h"
 #include "version.h"
@@ -80,8 +79,6 @@ int xmrig::App::exec()
         m_console = new Console(this);
     }
 
-    VirtualMemory::init(m_controller->config()->cpu().isHugePages());
-
     Summary::print(m_controller);
 
     if (m_controller->config()->isDryRun()) {
@@ -101,29 +98,12 @@ int xmrig::App::exec()
 
 void xmrig::App::onConsoleCommand(char command)
 {
-    switch (command) {
-    case 'h':
-    case 'H':
-        m_controller->miner()->printHashrate(true);
-        break;
-
-    case 'p':
-    case 'P':
-        m_controller->miner()->setEnabled(false);
-        break;
-
-    case 'r':
-    case 'R':
-        m_controller->miner()->setEnabled(true);
-        break;
-
-    case 3:
+    if (command == 3) {
         LOG_WARN("Ctrl+C received, exiting");
         close();
-        break;
-
-    default:
-        break;
+    }
+    else {
+        m_controller->miner()->execCommand(command);
     }
 }
 
