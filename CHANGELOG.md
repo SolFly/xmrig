@@ -1,3 +1,16 @@
+# v6.2.3
+- [#1745](https://github.com/xmrig/xmrig/pull/1745) AstroBWT: fixed OpenCL compilation on some systems.
+- [#1749](https://github.com/xmrig/xmrig/pull/1749) KawPow: optimized CPU share verification.
+- [#1752](https://github.com/xmrig/xmrig/pull/1752) RandomX: added error message when MSR mod fails.
+- [#1754](https://github.com/xmrig/xmrig/issues/1754) Fixed GPU health readings for pre Vega GPUs on Linux.
+- [#1756](https://github.com/xmrig/xmrig/issues/1756) Added results and connection reports.
+- [#1759](https://github.com/xmrig/xmrig/pull/1759) KawPow: fixed DAG initialization on slower AMD GPUs.
+- [#1763](https://github.com/xmrig/xmrig/pull/1763) KawPow: fixed rare duplicate share errors.
+- [#1766](https://github.com/xmrig/xmrig/pull/1766) RandomX: small speedup on Ryzen CPUs.
+
+# v6.2.2
+- [#1742](https://github.com/xmrig/xmrig/issues/1742) Fixed crash when use HTTP API.
+
 # v6.2.1
 - [#1726](https://github.com/xmrig/xmrig/issues/1726) Fixed detection of AVX2/AVX512.
 - [#1728](https://github.com/xmrig/xmrig/issues/1728) Fixed, 32 bit Windows builds was crash on start.
