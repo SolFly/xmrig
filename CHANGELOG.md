@@ -1,3 +1,19 @@
+# v6.8.1
+- [#2064](https://github.com/xmrig/xmrig/pull/2064) Added documentation for config.json CPU options.
+- [#2066](https://github.com/xmrig/xmrig/issues/2066) Fixed AMD GPUs health data readings on Linux.
+- [#2067](https://github.com/xmrig/xmrig/pull/2067) Fixed compilation error when RandomX and Argon2 are disabled.
+- [#2076](https://github.com/xmrig/xmrig/pull/2076) Added support for flexible huge page sizes on Linux.
+- [#2077](https://github.com/xmrig/xmrig/pull/2077) Fixed `illegal instruction` crash on ARM.
+
+# v6.8.0
+- [#2052](https://github.com/xmrig/xmrig/pull/2052) Added DMI/SMBIOS reader.
+  - Added information about memory modules on the miner startup and for online benchmark.
+  - Added new HTTP API endpoint: `GET /2/dmi`.
+  - Added new command line option `--no-dmi` or config option `"dmi"`.
+  - Added new CMake option `-DWITH_DMI=OFF`.
+- [#2057](https://github.com/xmrig/xmrig/pull/2057) Improved MSR subsystem code quality.
+- [#2058](https://github.com/xmrig/xmrig/pull/2058) RandomX JIT x86: removed unnecessary instructions.
+
 # v6.7.2
 - [#2039](https://github.com/xmrig/xmrig/pull/2039) Fixed solo mining.
 
