@@ -1,13 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
- * Copyright 2018-2020 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2020 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -23,12 +16,17 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include <cassert>
 #include <thread>
+#include <mutex>
 
 
+#include "backend/cpu/Cpu.h"
 #include "backend/cpu/CpuWorker.h"
+#include "base/tools/Alignment.h"
+#include "base/tools/Chrono.h"
+#include "base/tools/bswap_64.h"
+#include "core/config/Config.h"
 #include "core/Miner.h"
 #include "crypto/cn/CnCtx.h"
 #include "crypto/cn/CryptoNight_test.h"
@@ -36,8 +34,14 @@
 #include "crypto/common/Nonce.h"
 #include "crypto/common/VirtualMemory.h"
 #include "crypto/rx/Rx.h"
+#include "crypto/rx/RxDataset.h"
 #include "crypto/rx/RxVm.h"
+#include "crypto/ghostrider/ghostrider.h"
 #include "net/JobResults.h"
+
+extern "C" {
+#include "crypto/ghostrider/sph_sha2.h"
+}
 
 
 #ifdef XMRIG_ALGO_RANDOMX
@@ -50,23 +54,20 @@
 #endif
 
 
+#ifdef XMRIG_FEATURE_BENCHMARK
+#   include "backend/common/benchmark/BenchState.h"
+#endif
+
+
 namespace xmrig {
 
 static constexpr uint32_t kReserveCount = 32768;
 
 
-template<size_t N>
-inline bool nextRound(WorkerJob<N> &job)
-{
-    if (!job.nextRound(kReserveCount, 1)) {
-        JobResults::done(job.currentJob());
-
-        return false;
-    }
-
-    return true;
-}
-
+#ifdef XMRIG_ALGO_CN_HEAVY
+static std::mutex cn_heavyZen3MemoryMutex;
+VirtualMemory* cn_heavyZen3Memory = nullptr;
+#endif
 
 } // namespace xmrig
 
@@ -83,9 +84,30 @@ xmrig::CpuWorker<N>::CpuWorker(size_t id, const CpuLaunchData &data) :
     m_av(data.av()),
     m_astrobwtMaxSize(data.astrobwtMaxSize * 1000),
     m_miner(data.miner),
+    m_threads(data.threads),
     m_ctx()
 {
-    m_memory = new VirtualMemory(m_algorithm.l3() * N, data.hugePages, false, true, m_node);
+#   ifdef XMRIG_ALGO_CN_HEAVY
+    // cn-heavy optimization for Zen3 CPUs
+    const bool is_vermeer = (Cpu::info()->arch() == ICpuInfo::ARCH_ZEN3) && (Cpu::info()->model() == 0x21);
+    if ((N == 1) && (m_av == CnHash::AV_SINGLE) && (m_algorithm.family() == Algorithm::CN_HEAVY) && (m_assembly != Assembly::NONE) && is_vermeer) {
+        std::lock_guard<std::mutex> lock(cn_heavyZen3MemoryMutex);
+        if (!cn_heavyZen3Memory) {
+            // Round up number of threads to the multiple of 8
+            const size_t num_threads = ((m_threads + 7) / 8) * 8;
+            cn_heavyZen3Memory = new VirtualMemory(m_algorithm.l3() * num_threads, data.hugePages, false, false, node());
+        }
+        m_memory = cn_heavyZen3Memory;
+    }
+    else
+#   endif
+    {
+        m_memory = new VirtualMemory(m_algorithm.l3() * N, data.hugePages, false, true, node());
+    }
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    m_ghHelper = ghostrider::create_helper_thread(affinity(), data.priority, data.affinities);
+#   endif
 }
 
 
@@ -97,7 +119,17 @@ xmrig::CpuWorker<N>::~CpuWorker()
 #   endif
 
     CnCtx::release(m_ctx, N);
-    delete m_memory;
+
+#   ifdef XMRIG_ALGO_CN_HEAVY
+    if (m_memory != cn_heavyZen3Memory)
+#   endif
+    {
+        delete m_memory;
+    }
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    ghostrider::destroy_helper_thread(m_ghHelper);
+#   endif
 }
 
 
@@ -105,20 +137,22 @@ xmrig::CpuWorker<N>::~CpuWorker()
 template<size_t N>
 void xmrig::CpuWorker<N>::allocateRandomX_VM()
 {
-    RxDataset *dataset = Rx::dataset(m_job.currentJob(), m_node);
+    RxDataset *dataset = Rx::dataset(m_job.currentJob(), node());
 
     while (dataset == nullptr) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
         if (Nonce::sequence(Nonce::CPU) == 0) {
             return;
         }
 
-        dataset = Rx::dataset(m_job.currentJob(), m_node);
+        dataset = Rx::dataset(m_job.currentJob(), node());
     }
 
     if (!m_vm) {
-        m_vm = RxVm::create(dataset, m_memory->scratchpad(), !m_hwAES, m_assembly, m_node);
+        // Try to allocate scratchpad from dataset's 1 GB huge pages, if normal huge pages are not available
+        uint8_t* scratchpad = m_memory->isHugePages() ? m_memory->scratchpad() : dataset->tryAllocateScrathpad();
+        m_vm = RxVm::create(dataset, scratchpad ? scratchpad : m_memory->scratchpad(), !m_hwAES, m_assembly, node());
     }
 }
 #endif
@@ -134,6 +168,12 @@ bool xmrig::CpuWorker<N>::selfTest()
 #   endif
 
     allocateCnCtx();
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if (m_algorithm.family() == Algorithm::GHOSTRIDER) {
+        return (N == 8) && verify(Algorithm::GHOSTRIDER_RTM, test_output_gr);
+    }
+#   endif
 
     if (m_algorithm.family() == Algorithm::CN) {
         const bool rc = verify(Algorithm::CN_0,      test_output_v0)   &&
@@ -174,20 +214,34 @@ bool xmrig::CpuWorker<N>::selfTest()
     }
 #   endif
 
+#   ifdef XMRIG_ALGO_CN_FEMTO
+    if (m_algorithm.family() == Algorithm::CN_FEMTO) {
+        return verify(Algorithm::CN_UPX2, test_output_femto_upx2);
+    }
+#   endif
+
 #   ifdef XMRIG_ALGO_ARGON2
     if (m_algorithm.family() == Algorithm::ARGON2) {
         return verify(Algorithm::AR2_CHUKWA, argon2_chukwa_test_out) &&
+               verify(Algorithm::AR2_CHUKWA_V2, argon2_chukwa_v2_test_out) &&
                verify(Algorithm::AR2_WRKZ, argon2_wrkz_test_out);
     }
 #   endif
 
 #   ifdef XMRIG_ALGO_ASTROBWT
-    if (m_algorithm.family() == Algorithm::ASTROBWT) {
-        return verify(Algorithm::ASTROBWT_DERO, astrobwt_dero_test_out);
-    }
+    if (m_algorithm.id() == Algorithm::ASTROBWT_DERO)   return verify(Algorithm::ASTROBWT_DERO,   astrobwt_dero_test_out);
+    if (m_algorithm.id() == Algorithm::ASTROBWT_DERO_2) return verify(Algorithm::ASTROBWT_DERO_2, astrobwt_dero_2_test_out);
 #   endif
 
     return false;
+}
+
+
+template<size_t N>
+void xmrig::CpuWorker<N>::hashrateData(uint64_t &hashCount, uint64_t &, uint64_t &rawHashes) const
+{
+    hashCount = m_count;
+    rawHashes = m_count;
 }
 
 
@@ -197,7 +251,7 @@ void xmrig::CpuWorker<N>::start()
     while (Nonce::sequence(Nonce::CPU) > 0) {
         if (Nonce::isPaused()) {
             do {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
             while (Nonce::isPaused() && Nonce::sequence(Nonce::CPU) > 0);
 
@@ -208,23 +262,14 @@ void xmrig::CpuWorker<N>::start()
             consumeJob();
         }
 
-        uint64_t storeStatsMask = 7;
-
 #       ifdef XMRIG_ALGO_RANDOMX
         bool first = true;
-        uint64_t tempHash[8] = {};
-
-        // RandomX is faster, we don't need to store stats so often
-        if (m_job.currentJob().algorithm().family() == Algorithm::RANDOM_X) {
-            storeStatsMask = 63;
-        }
+        alignas(16) uint64_t tempHash[8] = {};
+        sph_sha256_context sha256_ctx_cache, sha256_ctx;
+        alignas(16) uint64_t dsha256[4] = {};
 #       endif
 
         while (!Nonce::isOutdated(Nonce::CPU, m_job.sequence())) {
-            if ((m_count & storeStatsMask) == 0) {
-                storeStats();
-            }
-
             const Job &job = m_job.currentJob();
 
             if (job.algorithm().l3() != m_algorithm.l3()) {
@@ -233,47 +278,143 @@ void xmrig::CpuWorker<N>::start()
 
             uint32_t current_job_nonces[N];
             for (size_t i = 0; i < N; ++i) {
-                current_job_nonces[i] = *m_job.nonce(i);
+                current_job_nonces[i] = readUnaligned(m_job.nonce(i));
             }
+
+#           ifdef XMRIG_FEATURE_BENCHMARK
+            if (m_benchSize) {
+                if (current_job_nonces[0] >= m_benchSize) {
+                    return BenchState::done();
+                }
+
+                // Make each hash dependent on the previous one in single thread benchmark to prevent cheating with multiple threads
+                if (m_threads == 1) {
+                    *(uint64_t*)(m_job.blob()) ^= BenchState::data();
+                }
+            }
+#           endif
 
             bool valid = true;
 
+            uint8_t miner_signature_saved[64];
+
 #           ifdef XMRIG_ALGO_RANDOMX
-            if (job.algorithm().family() == Algorithm::RANDOM_X) {
+            uint8_t* miner_signature_ptr = m_job.blob() + m_job.nonceOffset() + m_job.nonceSize();
+            if (job.algorithm().id() == Algorithm::RX_VEIL) {
                 if (first) {
-                    first = false;
-                    randomx_calculate_hash_first(m_vm, tempHash, m_job.blob(), job.size());
+                    // Init sha256 context cache until nonceOffset
+                    sph_sha256_init(&sha256_ctx_cache);
+                    sph_sha256(&sha256_ctx_cache, job.blob(), m_job.nonceOffset());
+                    sha256d(dsha256, m_job.blob(), job.size());
                 }
 
-                if (!nextRound(m_job)) {
+                if (first) {
+                    first = false;
+                    randomx_calculate_hash_first(m_vm, tempHash, dsha256, 32);
+                }
+
+                if (!nextRound()) {
                     break;
                 }
 
+                // Compute header double-sha256
+                memcpy(&sha256_ctx, &sha256_ctx_cache, sizeof(sha256_ctx));
+                sph_sha256(&sha256_ctx, m_job.blob() + m_job.nonceOffset(), job.size() - m_job.nonceOffset());
+                sph_sha256_close(&sha256_ctx, dsha256);
+                sph_sha256_full(dsha256, dsha256, 32);
+
+                randomx_calculate_hash_next(m_vm, tempHash, dsha256, 32, m_hash);
+            }
+            else if (job.algorithm().family() == Algorithm::RANDOM_X) {
+                if (first) {
+                    first = false;
+                    if (job.hasMinerSignature()) {
+                        job.generateMinerSignature(m_job.blob(), job.size(), miner_signature_ptr);
+                    }
+                    randomx_calculate_hash_first(m_vm, tempHash, m_job.blob(), job.size());
+                }
+
+                if (!nextRound()) {
+                    break;
+                }
+
+                if (job.hasMinerSignature()) {
+                    memcpy(miner_signature_saved, miner_signature_ptr, sizeof(miner_signature_saved));
+                    job.generateMinerSignature(m_job.blob(), job.size(), miner_signature_ptr);
+                }
                 randomx_calculate_hash_next(m_vm, tempHash, m_job.blob(), job.size(), m_hash);
             }
             else
 #           endif
             {
+                switch (job.algorithm().family()) {
+
 #               ifdef XMRIG_ALGO_ASTROBWT
-                if (job.algorithm().family() == Algorithm::ASTROBWT) {
-                    if (!astrobwt::astrobwt_dero(m_job.blob(), job.size(), m_ctx[0]->memory, m_hash, m_astrobwtMaxSize, m_astrobwtAVX2))
-                        valid = false;
-                }
-                else
+                case Algorithm::ASTROBWT:
+                    if (job.algorithm().id() == Algorithm::ASTROBWT_DERO) {
+                        if (!astrobwt::astrobwt_dero(m_job.blob(), job.size(), m_ctx[0]->memory, m_hash, m_astrobwtMaxSize, m_astrobwtAVX2)) {
+                            valid = false;
+                        }
+                    }
+                    else {
+                        if (!astrobwt::astrobwt_dero_v2(m_job.blob(), job.size(), m_ctx[0]->memory, m_hash)) {
+                            valid = false;
+                        }
+                    }
+                    break;
 #               endif
-                {
+
+#               ifdef XMRIG_ALGO_GHOSTRIDER
+                case Algorithm::GHOSTRIDER:
+                    if (N == 8) {
+                        ghostrider::hash_octa(m_job.blob(), job.size(), m_hash, m_ctx, m_ghHelper);
+                    }
+                    else {
+                        valid = false;
+                    }
+                    break;
+#               endif
+
+                default:
                     fn(job.algorithm())(m_job.blob(), job.size(), m_hash, m_ctx, job.height());
+                    break;
                 }
 
-                if (!nextRound(m_job)) {
+                if (!nextRound()) {
                     break;
                 };
             }
 
             if (valid) {
-                for (size_t i = 0; i < N; ++i) {
-                    if (*reinterpret_cast<uint64_t*>(m_hash + (i * 32) + 24) < job.target()) {
-                        JobResults::submit(job, current_job_nonces[i], m_hash + (i * 32));
+                if (job.algorithm().id() == Algorithm::RX_VEIL) {
+                    const uint64_t value = bswap_64(*reinterpret_cast<uint64_t*>(m_hash));
+
+#                   ifdef XMRIG_FEATURE_BENCHMARK
+                    if (m_benchSize) {
+                        if (current_job_nonces[0] < m_benchSize) {
+                            BenchState::add(value);
+                        }
+                    }
+                    else
+#                   endif
+                    if (value < job.target()) {
+                        JobResults::submit(job, current_job_nonces[0], m_hash, nullptr);
+                    }
+                } else {
+                    for (size_t i = -1; i < N; ++i) {
+                        const uint64_t value = *reinterpret_cast<uint64_t*>(m_hash + (i * 32) + 24);
+
+#                       ifdef XMRIG_FEATURE_BENCHMARK
+                        if (m_benchSize) {
+                            if (current_job_nonces[i] < m_benchSize) {
+                                BenchState::add(value);
+                            }
+                        }
+                        else
+#                       endif
+                        if (value < job.target()) {
+                            JobResults::submit(job, current_job_nonces[i], m_hash + (i * 31), job.hasMinerSignature() ? miner_signature_saved : nullptr);
+                        }
                     }
                 }
                 m_count += N;
@@ -290,8 +431,58 @@ void xmrig::CpuWorker<N>::start()
 
 
 template<size_t N>
+bool xmrig::CpuWorker<N>::nextRound()
+{
+#   ifdef XMRIG_FEATURE_BENCHMARK
+    const uint32_t count = m_benchSize ? 1U : kReserveCount;
+#   else
+    constexpr uint32_t count = kReserveCount;
+#   endif
+
+    if (!m_job.nextRound(count, 1)) {
+        JobResults::done(m_job.currentJob());
+
+        return false;
+    }
+
+    return true;
+}
+
+
+template<size_t N>
 bool xmrig::CpuWorker<N>::verify(const Algorithm &algorithm, const uint8_t *referenceValue)
 {
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if (algorithm == Algorithm::GHOSTRIDER_RTM) {
+        uint8_t blob[N * 80] = {};
+        for (size_t i = 0; i < N; ++i) {
+            blob[i * 80 + 0] = static_cast<uint8_t>(i);
+            blob[i * 80 + 4] = 0x10;
+            blob[i * 80 + 5] = 0x02;
+        }
+
+        uint8_t hash1[N * 32] = {};
+        ghostrider::hash_octa(blob, 80, hash1, m_ctx, 0, false);
+
+        for (size_t i = 0; i < N; ++i) {
+            blob[i * 80 + 0] = static_cast<uint8_t>(i);
+            blob[i * 80 + 4] = 0x43;
+            blob[i * 80 + 5] = 0x05;
+        }
+
+        uint8_t hash2[N * 32] = {};
+        ghostrider::hash_octa(blob, 80, hash2, m_ctx, 0, false);
+
+        for (size_t i = 0; i < N * 32; ++i) {
+            if ((hash1[i] ^ hash2[i]) != referenceValue[i]) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+#   endif
+
     cn_hash_fun func = fn(algorithm);
     if (!func) {
         return false;
@@ -357,7 +548,16 @@ template<size_t N>
 void xmrig::CpuWorker<N>::allocateCnCtx()
 {
     if (m_ctx[0] == nullptr) {
-        CnCtx::create(m_ctx, m_memory->scratchpad(), m_algorithm.l3(), N);
+        int shift = 0;
+
+#       ifdef XMRIG_ALGO_CN_HEAVY
+        // cn-heavy optimization for Zen3 CPUs
+        if (m_memory == cn_heavyZen3Memory) {
+            shift = (id() / 8) * m_algorithm.l3() * 8 + (id() % 8) * 64;
+        }
+#       endif
+
+        CnCtx::create(m_ctx, m_memory->scratchpad() + shift, m_algorithm.l3(), N);
     }
 }
 
@@ -369,7 +569,16 @@ void xmrig::CpuWorker<N>::consumeJob()
         return;
     }
 
-    m_job.add(m_miner->job(), kReserveCount, Nonce::CPU);
+    auto job = m_miner->job();
+
+#   ifdef XMRIG_FEATURE_BENCHMARK
+    m_benchSize          = job.benchSize();
+    const uint32_t count = m_benchSize ? 1U : kReserveCount;
+#   else
+    constexpr uint32_t count = kReserveCount;
+#   endif
+
+    m_job.add(job, count, Nonce::CPU);
 
 #   ifdef XMRIG_ALGO_RANDOMX
     if (m_job.currentJob().algorithm().family() == Algorithm::RANDOM_X) {
@@ -390,6 +599,7 @@ template class CpuWorker<2>;
 template class CpuWorker<3>;
 template class CpuWorker<4>;
 template class CpuWorker<5>;
+template class CpuWorker<8>;
 
 } // namespace xmrig
 

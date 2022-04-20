@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2019 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2020 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2020 XMRig       <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -21,7 +15,6 @@
  *   You should have received a copy of the GNU General Public License
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-
 
 #ifdef XMRIG_HWLOC_DEBUG
 #   include <uv.h>
@@ -91,20 +84,21 @@ static inline void findByType(hwloc_obj_t obj, hwloc_obj_type_t type, func lambd
 }
 
 
+static inline size_t countByType(hwloc_topology_t topology, hwloc_obj_type_t type)
+{
+    const int count = hwloc_get_nbobjs_by_type(topology, type);
+
+    return count > 0 ? static_cast<size_t>(count) : 0;
+}
+
+
+#ifndef XMRIG_ARM
 static inline std::vector<hwloc_obj_t> findByType(hwloc_obj_t obj, hwloc_obj_type_t type)
 {
     std::vector<hwloc_obj_t> out;
     findByType(obj, type, [&out](hwloc_obj_t found) { out.emplace_back(found); });
 
     return out;
-}
-
-
-static inline size_t countByType(hwloc_topology_t topology, hwloc_obj_type_t type)
-{
-    const int count = hwloc_get_nbobjs_by_type(topology, type);
-
-    return count > 0 ? static_cast<size_t>(count) : 0;
 }
 
 
@@ -122,6 +116,7 @@ static inline bool isCacheExclusive(hwloc_obj_t obj)
     const char *value = hwloc_obj_get_info_by_name(obj, "Inclusive");
     return value == nullptr || value[0] != '1';
 }
+#endif
 
 
 } // namespace xmrig
@@ -129,8 +124,6 @@ static inline bool isCacheExclusive(hwloc_obj_t obj)
 
 xmrig::HwlocCpuInfo::HwlocCpuInfo()
 {
-    m_threads = 0;
-
     hwloc_topology_init(&m_topology);
     hwloc_topology_load(m_topology);
 
@@ -174,7 +167,8 @@ xmrig::HwlocCpuInfo::HwlocCpuInfo()
 
     findCache(root, 2, 3, [this](hwloc_obj_t found) { this->m_cache[found->attr->cache.depth] += found->attr->cache.size; });
 
-    m_threads   = countByType(m_topology, HWLOC_OBJ_PU);
+    setThreads(countByType(m_topology, HWLOC_OBJ_PU));
+
     m_cores     = countByType(m_topology, HWLOC_OBJ_CORE);
     m_nodes     = std::max(hwloc_bitmap_weight(hwloc_topology_get_complete_nodeset(m_topology)), 1);
     m_packages  = countByType(m_topology, HWLOC_OBJ_PACKAGE);
@@ -191,6 +185,12 @@ xmrig::HwlocCpuInfo::HwlocCpuInfo()
             m_nodeset.emplace_back(node->os_index);
         }
     }
+
+#   if defined(XMRIG_OS_MACOS) && defined(XMRIG_ARM)
+    if (L2() == 33554432U && m_cores == 8 && m_cores == m_threads) {
+        m_cache[2] = 16777216U;
+    }
+#   endif
 }
 
 
@@ -216,12 +216,7 @@ bool xmrig::HwlocCpuInfo::membind(hwloc_const_bitmap_t nodeset)
 
 xmrig::CpuThreads xmrig::HwlocCpuInfo::threads(const Algorithm &algorithm, uint32_t limit) const
 {
-#   ifdef XMRIG_ALGO_ASTROBWT
-    if (algorithm == Algorithm::ASTROBWT_DERO) {
-        return BasicCpuInfo::threads(algorithm, limit);
-    }
-#   endif
-
+#   ifndef XMRIG_ARM
     if (L2() == 0 && L3() == 0) {
         return BasicCpuInfo::threads(algorithm, limit);
     }
@@ -257,8 +252,30 @@ xmrig::CpuThreads xmrig::HwlocCpuInfo::threads(const Algorithm &algorithm, uint3
     }
 
     if (threads.isEmpty()) {
-        LOG_WARN("hwloc auto configuration for algorithm \"%s\" failed.", algorithm.shortName());
+        LOG_WARN("hwloc auto configuration for algorithm \"%s\" failed.", algorithm.name());
 
+        return BasicCpuInfo::threads(algorithm, limit);
+    }
+
+    return threads;
+#   else
+    return allThreads(algorithm, limit);
+#   endif
+}
+
+
+xmrig::CpuThreads xmrig::HwlocCpuInfo::allThreads(const Algorithm &algorithm, uint32_t limit) const
+{
+    CpuThreads threads;
+    threads.reserve(m_threads);
+
+    const uint32_t intensity = (algorithm.family() == Algorithm::GHOSTRIDER) ? 8 : 0;
+
+    for (const int32_t pu : m_units) {
+        threads.add(pu, intensity);
+    }
+
+    if (threads.isEmpty()) {
         return BasicCpuInfo::threads(algorithm, limit);
     }
 
@@ -266,8 +283,10 @@ xmrig::CpuThreads xmrig::HwlocCpuInfo::threads(const Algorithm &algorithm, uint3
 }
 
 
+
 void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorithm &algorithm, CpuThreads &threads, size_t limit) const
 {
+#   ifndef XMRIG_ARM
     constexpr size_t oneMiB = 1024U * 1024U;
 
     size_t PUs = countByType(cache, HWLOC_OBJ_PU);
@@ -279,13 +298,32 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
     cores.reserve(m_cores);
     findByType(cache, HWLOC_OBJ_CORE, [&cores](hwloc_obj_t found) { cores.emplace_back(found); });
 
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if ((algorithm == Algorithm::GHOSTRIDER_RTM) && (PUs > cores.size()) && (PUs < cores.size() * 2)) {
+        // Don't use E-cores on Alder Lake
+        cores.erase(std::remove_if(cores.begin(), cores.end(), [](hwloc_obj_t c) { return hwloc_bitmap_weight(c->cpuset) == 1; }), cores.end());
+
+        // This shouldn't happen, but check it anyway
+        if (cores.empty()) {
+            findByType(cache, HWLOC_OBJ_CORE, [&cores](hwloc_obj_t found) { cores.emplace_back(found); });
+        }
+    }
+#   endif
+
     size_t L3               = cache->attr->cache.size;
     const bool L3_exclusive = isCacheExclusive(cache);
     size_t L2               = 0;
     int L2_associativity    = 0;
     size_t extra            = 0;
-    const size_t scratchpad = algorithm.l3();
+    size_t scratchpad       = algorithm.l3();
     uint32_t intensity      = algorithm.maxIntensity() == 1 ? 0 : 1;
+
+#   ifdef XMRIG_ALGO_ASTROBWT
+    if (algorithm == Algorithm::ASTROBWT_DERO) {
+        // Use fake low value to force usage of all available cores for AstroBWT (taking 'limit' into account)
+        scratchpad = 16 * 1024;
+    }
+#   endif
 
     if (cache->attr->cache.depth == 3) {
         for (size_t i = 0; i < cache->arity; ++i) {
@@ -312,11 +350,10 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
 
     size_t cacheHashes = ((L3 + extra) + (scratchpad / 2)) / scratchpad;
 
-#   ifdef XMRIG_ALGO_CN_PICO
-    if (intensity && algorithm == Algorithm::CN_PICO_0 && (cacheHashes / PUs) >= 2) {
+    const auto family = algorithm.family();
+    if (intensity && ((family == Algorithm::CN_PICO) || (family == Algorithm::CN_FEMTO)) && (cacheHashes / PUs) >= 2) {
         intensity = 2;
     }
-#   endif
 
 #   ifdef XMRIG_ALGO_RANDOMX
     if (extra == 0 && algorithm.l2() > 0) {
@@ -327,6 +364,15 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
     if (limit > 0) {
         cacheHashes = std::min(cacheHashes, limit);
     }
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if (algorithm == Algorithm::GHOSTRIDER_RTM) {
+        // GhostRider implementation runs 8 hashes at a time
+        intensity = 8;
+        // Always 1 thread per core (it uses additional helper thread when possible)
+        cacheHashes = std::min(cacheHashes, cores.size());
+    }
+#   endif
 
     if (cacheHashes >= PUs) {
         for (hwloc_obj_t core : cores) {
@@ -339,10 +385,14 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
         return;
     }
 
+    std::vector<std::pair<int64_t, int32_t>> threads_data;
+    threads_data.reserve(cores.size());
+
     size_t pu_id = 0;
     while (cacheHashes > 0 && PUs > 0) {
         bool allocated_pu = false;
 
+        threads_data.clear();
         for (hwloc_obj_t core : cores) {
             const std::vector<hwloc_obj_t> units = findByType(core, HWLOC_OBJ_PU);
             if (units.size() <= pu_id) {
@@ -353,11 +403,23 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
             PUs--;
 
             allocated_pu = true;
-            threads.add(units[pu_id]->os_index, intensity);
+            threads_data.emplace_back(units[pu_id]->os_index, intensity);
 
             if (cacheHashes == 0) {
                 break;
             }
+        }
+
+        // Reversing of "threads_data" and "cores" is done to fill in virtual cores starting from the last one, but still in order
+        // For example, cn-heavy threads on 6-core Zen2/Zen3 will have affinity [0,2,4,6,8,10,9,11]
+        // This is important for Zen3 cn-heavy optimization
+
+        if (pu_id & 1) {
+            std::reverse(threads_data.begin(), threads_data.end());
+        }
+
+        for (const auto& t : threads_data) {
+            threads.add(t.first, t.second);
         }
 
         if (!allocated_pu) {
@@ -365,5 +427,28 @@ void xmrig::HwlocCpuInfo::processTopLevelCache(hwloc_obj_t cache, const Algorith
         }
 
         pu_id++;
+        std::reverse(cores.begin(), cores.end());
+    }
+#   endif
+}
+
+
+void xmrig::HwlocCpuInfo::setThreads(size_t threads)
+{
+    if (!threads) {
+        return;
+    }
+
+    m_threads = threads;
+
+    if (m_units.size() != m_threads) {
+        m_units.resize(m_threads);
+    }
+
+    hwloc_obj_t pu = nullptr;
+    size_t i       = 0;
+
+    while ((pu = hwloc_get_next_obj_by_type(m_topology, HWLOC_OBJ_PU, pu)) != nullptr) {
+        m_units[i++] = static_cast<int32_t>(pu->os_index);
     }
 }

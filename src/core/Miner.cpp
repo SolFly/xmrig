@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2020 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2020 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -22,13 +16,13 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include <algorithm>
 #include <mutex>
 #include <thread>
 
 
 #include "core/Miner.h"
+#include "core/Taskbar.h"
 #include "3rdparty/rapidjson/document.h"
 #include "backend/common/Hashrate.h"
 #include "backend/cpu/Cpu.h"
@@ -42,7 +36,6 @@
 #include "core/config/Config.h"
 #include "core/Controller.h"
 #include "crypto/common/Nonce.h"
-#include "crypto/rx/Rx.h"
 #include "version.h"
 
 
@@ -63,12 +56,19 @@
 
 
 #ifdef XMRIG_ALGO_RANDOMX
+#   include "crypto/rx/Profiler.h"
+#   include "crypto/rx/Rx.h"
 #   include "crypto/rx/RxConfig.h"
 #endif
 
 
 #ifdef XMRIG_ALGO_ASTROBWT
 #   include "crypto/astrobwt/AstroBWT.h"
+#endif
+
+
+#ifdef XMRIG_ALGO_GHOSTRIDER
+#   include "crypto/ghostrider/ghostrider.h"
 #endif
 
 
@@ -84,7 +84,7 @@ public:
     XMRIG_DISABLE_COPY_MOVE_DEFAULT(MinerPrivate)
 
 
-    inline MinerPrivate(Controller *controller) : controller(controller) {}
+    inline explicit MinerPrivate(Controller *controller) : controller(controller) {}
 
 
     inline ~MinerPrivate()
@@ -115,15 +115,7 @@ public:
 
     inline void rebuild()
     {
-        algorithms.clear();
-
-        for (int i = 0; i < Algorithm::MAX; ++i) {
-            const Algorithm algo(static_cast<Algorithm::Id>(i));
-
-            if (isEnabled(algo)) {
-                algorithms.push_back(algo);
-            }
-        }
+        algorithms = Algorithm::all([this](const Algorithm &algo) { return isEnabled(algo); });
     }
 
 
@@ -132,8 +124,6 @@ public:
         if (!enabled) {
             Nonce::pause(true);
         }
-
-        active = true;
 
         if (reset) {
             Nonce::reset(job.index());
@@ -145,7 +135,7 @@ public:
 
         Nonce::touch();
 
-        if (enabled) {
+        if (active && enabled) {
             Nonce::pause(false);
         }
 
@@ -164,7 +154,7 @@ public:
 
         reply.AddMember("version",      APP_VERSION, allocator);
         reply.AddMember("kind",         APP_KIND, allocator);
-        reply.AddMember("ua",           StringRef(Platform::userAgent()), allocator);
+        reply.AddMember("ua",           Platform::userAgent().toJSON(), allocator);
         reply.AddMember("cpu",          Cpu::toJSON(doc), allocator);
         reply.AddMember("donate_level", controller->config()->pools().donateLevel(), allocator);
         reply.AddMember("paused",       !enabled, allocator);
@@ -172,7 +162,7 @@ public:
         Value algo(kArrayType);
 
         for (const Algorithm &a : algorithms) {
-            algo.PushBack(StringRef(a.shortName()), allocator);
+            algo.PushBack(StringRef(a.name()), allocator);
         }
 
         reply.AddMember("algorithms", algo, allocator);
@@ -243,23 +233,88 @@ public:
 #   endif
 
 
+    static inline void printProfile()
+    {
+#       ifdef XMRIG_FEATURE_PROFILING
+        ProfileScopeData* data[ProfileScopeData::MAX_DATA_COUNT];
+
+        const uint32_t n = std::min<uint32_t>(ProfileScopeData::s_dataCount, ProfileScopeData::MAX_DATA_COUNT);
+        memcpy(data, ProfileScopeData::s_data, n * sizeof(ProfileScopeData*));
+
+        std::sort(data, data + n, [](ProfileScopeData* a, ProfileScopeData* b) {
+            return strcmp(a->m_threadId, b->m_threadId) < 0;
+        });
+
+        std::map<std::string, std::pair<uint32_t, double>> averageTime;
+
+        for (uint32_t i = 0; i < n;)
+        {
+            uint32_t n1 = i;
+            while ((n1 < n) && (strcmp(data[i]->m_threadId, data[n1]->m_threadId) == 0)) {
+                ++n1;
+            }
+
+            std::sort(data + i, data + n1, [](ProfileScopeData* a, ProfileScopeData* b) {
+                return a->m_totalCycles > b->m_totalCycles;
+            });
+
+            for (uint32_t j = i; j < n1; ++j) {
+                ProfileScopeData* p = data[j];
+                const double t = p->m_totalCycles / p->m_totalSamples * 1e9 / ProfileScopeData::s_tscSpeed;
+                LOG_INFO("%s Thread %6s | %-30s | %7.3f%% | %9.0f ns",
+                    Tags::profiler(),
+                    p->m_threadId,
+                    p->m_name,
+                    p->m_totalCycles * 100.0 / data[i]->m_totalCycles,
+                    t
+                );
+                auto& value = averageTime[p->m_name];
+                ++value.first;
+                value.second += t;
+            }
+
+            LOG_INFO("%s --------------|--------------------------------|----------|-------------", Tags::profiler());
+
+            i = n1;
+        }
+
+        for (auto& data : averageTime) {
+            LOG_INFO("%s %-30s %9.1f ns", Tags::profiler(), data.first.c_str(), data.second.second / data.second.first);
+        }
+#       endif
+    }
+
+
     void printHashrate(bool details)
     {
-        char num[16 * 4] = { 0 };
-        double speed[3] = { 0.0 };
+        char num[16 * 5] = { 0 };
+        double speed[3]  = { 0.0 };
+        uint32_t count   = 0;
+
+        double avg_hashrate = 0.0;
 
         for (auto backend : backends) {
             const auto hashrate = backend->hashrate();
             if (hashrate) {
+                ++count;
+
                 speed[0] += hashrate->calc(Hashrate::ShortInterval);
                 speed[1] += hashrate->calc(Hashrate::MediumInterval);
                 speed[2] += hashrate->calc(Hashrate::LargeInterval);
+
+                avg_hashrate += hashrate->average();
             }
 
             backend->printHashrate(details);
         }
 
-        double scale = 1.0;
+        if (!count) {
+            return;
+        }
+
+        printProfile();
+
+        double scale  = 1.0;
         const char* h = "H/s";
 
         if ((speed[0] >= 1e6) || (speed[1] >= 1e6) || (speed[2] >= 1e6) || (maxHashrate[algorithm] >= 1e6)) {
@@ -267,25 +322,49 @@ public:
             h = "MH/s";
         }
 
-        LOG_INFO("%s " WHITE_BOLD("speed") " 10s/60s/15m " CYAN_BOLD("%s") CYAN(" %s %s ") CYAN_BOLD("%s") " max " CYAN_BOLD("%s %s"),
+        char avg_hashrate_buf[64];
+        avg_hashrate_buf[0] = '\0';
+
+#       ifdef XMRIG_ALGO_GHOSTRIDER
+        if (algorithm.family() == Algorithm::GHOSTRIDER) {
+            snprintf(avg_hashrate_buf, sizeof(avg_hashrate_buf), " avg " CYAN_BOLD("%s %s"), Hashrate::format(avg_hashrate * scale, num + 16 * 4, 16), h);
+        }
+#       endif
+
+        LOG_INFO("%s " WHITE_BOLD("speed") " 10s/60s/15m " CYAN_BOLD("%s") CYAN(" %s %s ") CYAN_BOLD("%s") " max " CYAN_BOLD("%s %s") "%s",
                  Tags::miner(),
-                 Hashrate::format(speed[0] * scale,                 num,          sizeof(num) / 4),
-                 Hashrate::format(speed[1] * scale,                 num + 16,     sizeof(num) / 4),
-                 Hashrate::format(speed[2] * scale,                 num + 16 * 2, sizeof(num) / 4), h,
-                 Hashrate::format(maxHashrate[algorithm] * scale,   num + 16 * 3, sizeof(num) / 4), h
+                 Hashrate::format(speed[0] * scale,                 num,          16),
+                 Hashrate::format(speed[1] * scale,                 num + 16,     16),
+                 Hashrate::format(speed[2] * scale,                 num + 16 * 2, 16), h,
+                 Hashrate::format(maxHashrate[algorithm] * scale,   num + 16 * 3, 16), h,
+                 avg_hashrate_buf
                  );
+
+#       ifdef XMRIG_FEATURE_BENCHMARK
+        for (auto backend : backends) {
+            backend->printBenchProgress();
+        }
+#       endif
     }
 
 
 #   ifdef XMRIG_ALGO_RANDOMX
-    inline bool initRX() { return Rx::init(job, controller->config()->rx(), controller->config()->cpu()); }
+    inline bool initRX() const { return Rx::init(job, controller->config()->rx(), controller->config()->cpu()); }
+#   endif
+
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    inline void initGhostRider() const { ghostrider::benchmark(); }
 #   endif
 
 
     Algorithm algorithm;
     Algorithms algorithms;
     bool active         = false;
+    bool battery_power  = false;
+    bool user_active    = false;
     bool enabled        = true;
+    int32_t auto_pause = 0;
     bool reset          = true;
     Controller *controller;
     Job job;
@@ -294,6 +373,8 @@ public:
     String userJobId;
     Timer *timer        = nullptr;
     uint64_t ticks      = 0;
+
+    Taskbar m_taskbar;
 };
 
 
@@ -309,6 +390,10 @@ xmrig::Miner::Miner(Controller *controller)
         Platform::setProcessPriority(priority);
         Platform::setThreadPriority(std::min(priority + 1, 5));
     }
+
+#   ifdef XMRIG_FEATURE_PROFILING
+    ProfileScopeData::Init();
+#   endif
 
 #   ifdef XMRIG_ALGO_RANDOMX
     Rx::init(this);
@@ -417,6 +502,7 @@ void xmrig::Miner::execCommand(char command)
 void xmrig::Miner::pause()
 {
     d_ptr->active = false;
+    d_ptr->m_taskbar.setActive(false);
 
     Nonce::pause(true);
     Nonce::touch();
@@ -429,13 +515,25 @@ void xmrig::Miner::setEnabled(bool enabled)
         return;
     }
 
+    if (d_ptr->battery_power && enabled) {
+        LOG_INFO("%s " YELLOW_BOLD("can't resume while on battery power"), Tags::miner());
+
+        return;
+    }
+
     d_ptr->enabled = enabled;
+    d_ptr->m_taskbar.setEnabled(enabled);
 
     if (enabled) {
-        LOG_INFO(GREEN_BOLD("resumed"));
+        LOG_INFO("%s " GREEN_BOLD("resumed"), Tags::miner());
     }
     else {
-        LOG_INFO(YELLOW_BOLD("paused") ", press " MAGENTA_BG_BOLD(" r ") " to resume");
+        if (d_ptr->battery_power) {
+            LOG_INFO("%s " YELLOW_BOLD("paused"), Tags::miner());
+        }
+        else {
+            LOG_INFO("%s " YELLOW_BOLD("paused") ", press " MAGENTA_BG_BOLD(" r ") " to resume", Tags::miner());
+        }
     }
 
     if (!d_ptr->active) {
@@ -455,7 +553,13 @@ void xmrig::Miner::setJob(const Job &job, bool donate)
 
 #   ifdef XMRIG_ALGO_RANDOMX
     if (job.algorithm().family() == Algorithm::RANDOM_X && !Rx::isReady(job)) {
-        stop();
+        if (d_ptr->algorithm != job.algorithm()) {
+            stop();
+        }
+        else {
+            Nonce::pause(true);
+            Nonce::touch();
+        }
     }
 #   endif
 
@@ -479,7 +583,16 @@ void xmrig::Miner::setJob(const Job &job, bool donate)
     constexpr const bool ready = true;
 #   endif
 
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if (job.algorithm().family() == Algorithm::GHOSTRIDER) {
+        d_ptr->initGhostRider();
+    }
+#   endif
+
     mutex.unlock();
+
+    d_ptr->active = true;
+    d_ptr->m_taskbar.setActive(true);
 
     if (ready) {
         d_ptr->handleJobChange();
@@ -516,10 +629,15 @@ void xmrig::Miner::onConfigChanged(Config *config, Config *previousConfig)
 void xmrig::Miner::onTimer(const Timer *)
 {
     double maxHashrate          = 0.0;
-    const auto healthPrintTime  = d_ptr->controller->config()->healthPrintTime();
+    const auto config           = d_ptr->controller->config();
+    const auto healthPrintTime  = config->healthPrintTime();
+
+    bool stopMiner = false;
 
     for (IBackend *backend : d_ptr->backends) {
-        backend->tick(d_ptr->ticks);
+        if (!backend->tick(d_ptr->ticks)) {
+            stopMiner = true;
+        }
 
         if (healthPrintTime && d_ptr->ticks && (d_ptr->ticks % (healthPrintTime * 2)) == 0 && backend->isEnabled()) {
             backend->printHealth();
@@ -532,12 +650,35 @@ void xmrig::Miner::onTimer(const Timer *)
 
     d_ptr->maxHashrate[d_ptr->algorithm] = std::max(d_ptr->maxHashrate[d_ptr->algorithm], maxHashrate);
 
-    const auto printTime = d_ptr->controller->config()->printTime();
+    const auto printTime = config->printTime();
     if (printTime && d_ptr->ticks && (d_ptr->ticks % (printTime * 2)) == 0) {
         d_ptr->printHashrate(false);
     }
 
     d_ptr->ticks++;
+
+    auto autoPause = [this](bool &state, bool pause, const char *pauseMessage, const char *activeMessage)
+    {
+        if ((pause && !state) || (!pause && state)) {
+            LOG_INFO("%s %s", Tags::miner(), pause ? pauseMessage : activeMessage);
+
+            state = pause;
+            d_ptr->auto_pause += pause ? 1 : -1;
+            setEnabled(d_ptr->auto_pause == 0);
+        }
+    };
+
+    if (config->isPauseOnBattery()) {
+        autoPause(d_ptr->battery_power, Platform::isOnBatteryPower(), YELLOW_BOLD("on battery power"), GREEN_BOLD("on AC power"));
+    }
+
+    if (config->isPauseOnActive()) {
+        autoPause(d_ptr->user_active, Platform::isUserActive(config->idleTime()), YELLOW_BOLD("user active"), GREEN_BOLD("user inactive"));
+    }
+
+    if (stopMiner) {
+        stop();
+    }
 }
 
 
