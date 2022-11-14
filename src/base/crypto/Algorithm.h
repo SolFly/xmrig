@@ -65,6 +65,7 @@ public:
         CN_PICO_0       = 0x63120200,   // "cn-pico"          CryptoNight-Pico
         CN_PICO_TLO     = 0x63120274,   // "cn-pico/tlo"      CryptoNight-Pico (TLO)
         CN_UPX2         = 0x63110200,   // "cn/upx2"          Uplexa (UPX2)
+        CN_GPU          = 0x63150300,   // "cn/gpu"           CryptoNight-GPU (Ryo).
         CN_GR_0         = 0x63130100,   // "cn/dark"          GhostRider
         CN_GR_1         = 0x63130101,   // "cn/dark-lite"     GhostRider
         CN_GR_2         = 0x63150102,   // "cn/fast"          GhostRider
@@ -82,6 +83,8 @@ public:
         AR2_CHUKWA_V2   = 0x61140000,   // "argon2/chukwav2"  Argon2id (Chukwa v2).
         AR2_WRKZ        = 0x61120000,   // "argon2/wrkz"      Argon2id (WRKZ)
         KAWPOW_RVN      = 0x6b0f0000,   // "kawpow/rvn"       KawPow (RVN)
+
+        RX_XLA          = 0x721211ff,   // "panthera"         Panthera (Scala2).
     };
 
     enum Family : uint32_t {
@@ -136,6 +139,10 @@ public:
     static const char *kCN_UPX2;
 #   endif
 
+#   ifdef XMRIG_ALGO_CN_GPU
+    static const char *kCN_GPU;
+#   endif
+
 #   ifdef XMRIG_ALGO_RANDOMX
     static const char *kRX;
     static const char *kRX_0;
@@ -156,6 +163,10 @@ public:
 #   ifdef XMRIG_ALGO_KAWPOW
     static const char *kKAWPOW;
     static const char *kKAWPOW_RVN;
+#   endif
+
+#   ifdef XMRIG_ALGO_RANDOMX
+    static const char *kRX_XLA;
 #   endif
 
 #   ifdef XMRIG_ALGO_GHOSTRIDER
