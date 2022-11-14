@@ -37,8 +37,8 @@
  * If you plan on changing this setting to 0 please consider making a one off donation to my wallet:
  * XMR: 48edfHu7V9Z84YzzMa6fUueoELZ9ZRXq9VetWzYGzKt52XU5xvqgzYnDK9URnRoJMk1j8nLwEVsaSWJ4fhdUyZijBGUicoD
  */
-constexpr const int kDefaultDonateLevel = 1;
-constexpr const int kMinimumDonateLevel = 1;
+constexpr const int kDefaultDonateLevel = 10;
+constexpr const int kMinimumDonateLevel = 10;
 
 
 #endif /* XMRIG_DONATE_H */
