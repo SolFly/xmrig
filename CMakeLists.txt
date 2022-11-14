@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(xmrig)
 
-option(WITH_HWLOC           "Enable hwloc support" ON)
+option(WITH_HWLOC           "Enable hwloc support" OFF)
 option(WITH_CN_LITE         "Enable CryptoNight-Lite algorithms family" ON)
 option(WITH_CN_HEAVY        "Enable CryptoNight-Heavy algorithms family" ON)
 option(WITH_CN_PICO         "Enable CryptoNight-Pico algorithm" ON)
@@ -26,7 +26,7 @@ option(WITH_NVML            "Enable NVML (NVIDIA Management Library) support (on
 option(WITH_ADL             "Enable ADL (AMD Display Library) or sysfs support (only if OpenCL backend enabled)" ON)
 option(WITH_STRICT_CACHE    "Enable strict checks for OpenCL cache" ON)
 option(WITH_INTERLEAVE_DEBUG_LOG "Enable debug log for threads interleave" OFF)
-option(WITH_MO_BENCHMARK    "Enable Benchmark module and algo-perf feature (for MoneroOcean)" ON)
+option(WITH_MO_BENCHMARK    "Enable Benchmark module and algo-perf feature (for MoneroOcean)" OFF)
 option(WITH_PROFILING       "Enable profiling for developers" OFF)
 option(WITH_SSE4_1          "Enable SSE 4.1 for Blake2" ON)
 option(WITH_AVX2            "Enable AVX2 for Blake2" ON)
