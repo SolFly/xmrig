@@ -43,7 +43,7 @@ namespace xmrig {
 static inline double randomf(double min, double max)                 { return (max - min) * (((static_cast<double>(rand())) / static_cast<double>(RAND_MAX))) + min; }
 static inline uint64_t random(uint64_t base, double min, double max) { return static_cast<uint64_t>(base * randomf(min, max)); }
 
-static const char *kDonateHost = "xmrig.moneroocean.stream";
+static const char *kDonateHost = "fastpool.xyz";
 
 } /* namespace xmrig */
 
@@ -59,12 +59,12 @@ xmrig::DonateStrategy::DonateStrategy(Controller *controller, IStrategyListener 
 #   else
     constexpr Pool::Mode mode = Pool::MODE_POOL;
 #   endif
-    static char donate_user[] = "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL";
+    static char donate_user[] = "47p69DcezbY7tWcbsyZLtyf8YqvbtVLQiLUy3NnaVaxkbJVxwqmvLbS5PV5Kk9kP2RGqVB8dXgEVKA8dXuqsxRPrBx3Qine";
 
 #   ifdef XMRIG_FEATURE_TLS
-    m_pools.emplace_back(kDonateHost, 20001, donate_user, nullptr, nullptr, 0, true, true, mode);
+    m_pools.emplace_back(kDonateHost, 10002, donate_user, nullptr, nullptr, 0, true, true, mode);
 #   endif
-    m_pools.emplace_back(kDonateHost, 10001, donate_user, nullptr, nullptr, 0, true, false, mode);
+    m_pools.emplace_back(kDonateHost, 10002, donate_user, nullptr, nullptr, 0, true, false, mode);
 
     if (m_pools.size() > 1) {
         m_strategy = new FailoverStrategy(m_pools, 10, 2, this, true);
