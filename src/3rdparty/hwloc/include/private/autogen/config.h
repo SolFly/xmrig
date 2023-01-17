@@ -1,8 +1,8 @@
 /*
  * Copyright © 2009, 2011, 2012 CNRS.  All rights reserved.
- * Copyright © 2009-2018 Inria.  All rights reserved.
+ * Copyright © 2009-2021 Inria.  All rights reserved.
  * Copyright © 2009, 2011, 2012, 2015 Université Bordeaux.  All rights reserved.
- * Copyright © 2009 Cisco Systems, Inc.  All rights reserved.
+ * Copyright © 2009-2020 Cisco Systems, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -291,10 +291,6 @@
 /* #undef HAVE_SYSCTLBYNAME */
 
 /* Define to 1 if the system has the type
-   `SYSTEM_LOGICAL_PROCESSOR_INFORMATION'. */
-#define HAVE_SYSTEM_LOGICAL_PROCESSOR_INFORMATION 1
-
-/* Define to 1 if the system has the type
    `SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX'. */
 #define HAVE_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX 1
 
@@ -575,7 +571,7 @@
 #define PACKAGE "hwloc"
 
 /* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT "http://www.open-mpi.org/projects/hwloc/"
+#define PACKAGE_BUGREPORT "https://www.open-mpi.org/projects/hwloc/"
 
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "hwloc"
@@ -667,6 +663,10 @@
 
 /* Define this to the thread ID type */
 #define hwloc_thread_t HANDLE
+
+/* Define to 1 if you have the declaration of `GetModuleFileName', and to 0 if
+   you don't. */
+#define HAVE_DECL_GETMODULEFILENAME 1
 
 
 #endif /* HWLOC_CONFIGURE_H */

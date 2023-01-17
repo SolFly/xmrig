@@ -6,8 +6,8 @@
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
  * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
  * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright 2018-2020 SChernykh   <https://github.com/SChernykh>
+ * Copyright 2016-2020 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -27,8 +27,8 @@
 #define XMRIG_CPULAUNCHDATA_H
 
 
+#include "base/crypto/Algorithm.h"
 #include "crypto/cn/CnHash.h"
-#include "crypto/common/Algorithm.h"
 #include "crypto/common/Assembly.h"
 #include "crypto/common/Nonce.h"
 
@@ -44,12 +44,12 @@ class Miner;
 class CpuLaunchData
 {
 public:
-    CpuLaunchData(const Miner *miner, const Algorithm &algorithm, const CpuConfig &config, const CpuThread &thread);
+    CpuLaunchData(const Miner *miner, const Algorithm &algorithm, const CpuConfig &config, const CpuThread &thread, size_t threads, const std::vector<int64_t>& affinities);
 
     bool isEqual(const CpuLaunchData &other) const;
     CnHash::AlgoVariant av() const;
 
-    inline constexpr static Nonce::Backend backend() { return Nonce::CPU; }
+    inline constexpr static Nonce::Backend backend()            { return Nonce::CPU; }
 
     inline bool operator!=(const CpuLaunchData &other) const    { return !isEqual(other); }
     inline bool operator==(const CpuLaunchData &other) const    { return isEqual(other); }
@@ -60,10 +60,13 @@ public:
     const Assembly assembly;
     const bool hugePages;
     const bool hwAES;
+    const bool yield;
     const int priority;
     const int64_t affinity;
     const Miner *miner;
+    const size_t threads;
     const uint32_t intensity;
+    const std::vector<int64_t> affinities;
 };
 
 

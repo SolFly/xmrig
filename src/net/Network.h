@@ -1,13 +1,7 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2019      Howard Chu  <https://github.com/hyc>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2019      Howard Chu  <https://github.com/hyc>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -27,17 +21,16 @@
 #define XMRIG_NETWORK_H
 
 
-#include <vector>
-
-
+#include "3rdparty/rapidjson/fwd.h"
 #include "base/api/interfaces/IApiListener.h"
 #include "base/kernel/interfaces/IBaseListener.h"
 #include "base/kernel/interfaces/IStrategyListener.h"
 #include "base/kernel/interfaces/ITimerListener.h"
 #include "base/tools/Object.h"
 #include "interfaces/IJobResultListener.h"
-#include "net/NetworkState.h"
-#include "rapidjson/fwd.h"
+
+
+#include <vector>
 
 
 namespace xmrig {
@@ -45,6 +38,7 @@ namespace xmrig {
 
 class Controller;
 class IStrategy;
+class NetworkState;
 
 
 class Network : public IJobResultListener, public IStrategyListener, public IBaseListener, public ITimerListener, public IApiListener
@@ -58,13 +52,14 @@ public:
     inline IStrategy *strategy() const { return m_strategy; }
 
     void connect();
+    void execCommand(char command);
 
 protected:
     inline void onTimer(const Timer *) override { tick(); }
 
     void onActive(IStrategy *strategy, IClient *client) override;
     void onConfigChanged(Config *config, Config *previousConfig) override;
-    void onJob(IStrategy *strategy, IClient *client, const Job &job) override;
+    void onJob(IStrategy *strategy, IClient *client, const Job &job, const rapidjson::Value &params) override;
     void onJobResult(const JobResult &result) override;
     void onLogin(IStrategy *strategy, IClient *client, rapidjson::Document &doc, rapidjson::Value &params) override;
     void onPause(IStrategy *strategy) override;
@@ -87,10 +82,10 @@ private:
 #   endif
 
     Controller *m_controller;
-    IStrategy *m_donate;
-    IStrategy *m_strategy;
-    NetworkState m_state;
-    Timer *m_timer;
+    IStrategy *m_donate     = nullptr;
+    IStrategy *m_strategy   = nullptr;
+    NetworkState *m_state   = nullptr;
+    Timer *m_timer          = nullptr;
 };
 
 

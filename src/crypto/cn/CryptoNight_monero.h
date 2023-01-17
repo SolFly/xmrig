@@ -67,8 +67,10 @@
 
 #ifdef _MSC_VER
 #   define VARIANT2_SET_ROUNDING_MODE() if (BASE == Algorithm::CN_2) { _control87(RC_DOWN, MCW_RC); }
+#   define RESTORE_ROUNDING_MODE() _control87(RC_NEAR, MCW_RC);
 #else
 #   define VARIANT2_SET_ROUNDING_MODE() if (BASE == Algorithm::CN_2) { fesetround(FE_DOWNWARD); }
+#   define RESTORE_ROUNDING_MODE() fesetround(FE_TONEAREST);
 #endif
 
 #   define VARIANT2_INTEGER_MATH(part, cl, cx) \
@@ -188,8 +190,8 @@
     r##part[1] = static_cast<uint32_t>(h##part[12] >> 32); \
     r##part[2] = static_cast<uint32_t>(h##part[13]); \
     r##part[3] = static_cast<uint32_t>(h##part[13] >> 32); \
-  } \
-  v4_random_math_init<ALGO>(code##part, height);
+    v4_random_math_init<ALGO>(code##part, height); \
+  }
 
 #define VARIANT4_RANDOM_MATH(part, al, ah, cl, bx0, bx1) \
   if (props.isR()) { \
@@ -201,5 +203,8 @@
     r##part[8] = static_cast<uint32_t>(_mm_cvtsi128_si32(_mm_srli_si128(bx1, 8))); \
     v4_random_math(code##part, r##part); \
   }
+
+extern bool cn_sse41_enabled;
+extern bool cn_vaes_enabled;
 
 #endif /* XMRIG_CRYPTONIGHT_MONERO_H */

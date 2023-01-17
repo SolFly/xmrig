@@ -1,14 +1,7 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2019 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
- * Copyright 2018-2019 tevador     <tevador@gmail.com>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2019 tevador     <tevador@gmail.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -24,8 +17,11 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "crypto/rx/RxDataset.h"
+#include "backend/cpu/Cpu.h"
+#include "base/io/log/Log.h"
+#include "base/io/log/Tags.h"
+#include "base/kernel/Platform.h"
 #include "crypto/common/VirtualMemory.h"
 #include "crypto/randomx/randomx.h"
 #include "crypto/rx/RxAlgo.h"
@@ -33,22 +29,49 @@
 
 
 #include <thread>
+#include <uv.h>
 
 
-static_assert(RANDOMX_FLAG_LARGE_PAGES == 1, "RANDOMX_FLAG_LARGE_PAGES flag mismatch");
+namespace xmrig {
 
 
-xmrig::RxDataset::RxDataset(bool hugePages, bool cache)
+static void init_dataset_wrapper(randomx_dataset *dataset, randomx_cache *cache, uint32_t startItem, uint32_t itemCount, int priority)
 {
-    allocate(hugePages);
+    Platform::setThreadPriority(priority);
+
+    if (Cpu::info()->hasAVX2() && (itemCount % 5)) {
+        randomx_init_dataset(dataset, cache, startItem, itemCount - (itemCount % 5));
+        randomx_init_dataset(dataset, cache, startItem + itemCount - 5, 5);
+    }
+    else {
+        randomx_init_dataset(dataset, cache, startItem, itemCount);
+    }
+}
+
+
+} // namespace xmrig
+
+
+xmrig::RxDataset::RxDataset(bool hugePages, bool oneGbPages, bool cache, RxConfig::Mode mode, uint32_t node) :
+    m_mode(mode),
+    m_node(node)
+{
+    allocate(hugePages, oneGbPages);
+
+    if (isOneGbPages()) {
+        m_cache = new RxCache(m_memory->raw() + VirtualMemory::align(maxSize()));
+
+        return;
+    }
 
     if (cache) {
-        m_cache = new RxCache(hugePages);
+        m_cache = new RxCache(hugePages, node);
     }
 }
 
 
 xmrig::RxDataset::RxDataset(RxCache *cache) :
+    m_node(0),
     m_cache(cache)
 {
 }
@@ -56,17 +79,16 @@ xmrig::RxDataset::RxDataset(RxCache *cache) :
 
 xmrig::RxDataset::~RxDataset()
 {
-    if (m_dataset) {
-        randomx_release_dataset(m_dataset);
-    }
+    randomx_release_dataset(m_dataset);
 
     delete m_cache;
+    delete m_memory;
 }
 
 
-bool xmrig::RxDataset::init(const Buffer &seed, uint32_t numThreads)
+bool xmrig::RxDataset::init(const Buffer &seed, uint32_t numThreads, int priority)
 {
-    if (!m_cache) {
+    if (!m_cache || !m_cache->get()) {
         return false;
     }
 
@@ -85,7 +107,7 @@ bool xmrig::RxDataset::init(const Buffer &seed, uint32_t numThreads)
         for (uint64_t i = 0; i < numThreads; ++i) {
             const uint32_t a = (datasetItemCount * i) / numThreads;
             const uint32_t b = (datasetItemCount * (i + 1)) / numThreads;
-            threads.emplace_back(randomx_init_dataset, m_dataset, m_cache->get(), a, b - a);
+            threads.emplace_back(init_dataset_wrapper, m_dataset, m_cache->get(), a, b - a, priority);
         }
 
         for (uint32_t i = 0; i < numThreads; ++i) {
@@ -93,10 +115,34 @@ bool xmrig::RxDataset::init(const Buffer &seed, uint32_t numThreads)
         }
     }
     else {
-        randomx_init_dataset(m_dataset, m_cache->get(), 0, datasetItemCount);
+        init_dataset_wrapper(m_dataset, m_cache->get(), 0, datasetItemCount, priority);
     }
 
     return true;
+}
+
+
+bool xmrig::RxDataset::isHugePages() const
+{
+    return m_memory && m_memory->isHugePages();
+}
+
+
+bool xmrig::RxDataset::isOneGbPages() const
+{
+    return m_memory && m_memory->isOneGbPages();
+}
+
+
+xmrig::HugePagesInfo xmrig::RxDataset::hugePages(bool cache) const
+{
+    auto pages = m_memory ? m_memory->hugePages() : HugePagesInfo();
+
+    if (cache && m_cache) {
+        pages += m_cache->hugePages();
+    }
+
+    return pages;
 }
 
 
@@ -116,26 +162,19 @@ size_t xmrig::RxDataset::size(bool cache) const
 }
 
 
-std::pair<uint32_t, uint32_t> xmrig::RxDataset::hugePages(bool cache) const
+uint8_t *xmrig::RxDataset::tryAllocateScrathpad()
 {
-    constexpr size_t twoMiB     = 2u * 1024u * 1024u;
-    constexpr size_t cacheSize  = VirtualMemory::align(RxCache::maxSize(), twoMiB) / twoMiB;
-    size_t total                = VirtualMemory::align(maxSize(), twoMiB) / twoMiB;
-
-    uint32_t count = 0;
-    if (isHugePages()) {
-        count += total;
+    auto p = reinterpret_cast<uint8_t *>(raw());
+    if (!p) {
+        return nullptr;
     }
 
-    if (cache && m_cache) {
-        total += cacheSize;
-
-        if (m_cache->isHugePages()) {
-            count += cacheSize;
-        }
+    const size_t offset = m_scratchpadOffset.fetch_add(RANDOMX_SCRATCHPAD_L3_MAX_SIZE);
+    if (offset + RANDOMX_SCRATCHPAD_L3_MAX_SIZE > m_scratchpadLimit) {
+        return nullptr;
     }
 
-    return { count, total };
+    return p + offset;
 }
 
 
@@ -151,19 +190,37 @@ void xmrig::RxDataset::setRaw(const void *raw)
         return;
     }
 
-    memcpy(randomx_get_dataset_memory(m_dataset), raw, maxSize());
+    volatile size_t N = maxSize();
+    memcpy(randomx_get_dataset_memory(m_dataset), raw, N);
 }
 
 
-void xmrig::RxDataset::allocate(bool hugePages)
+void xmrig::RxDataset::allocate(bool hugePages, bool oneGbPages)
 {
-    if (hugePages) {
-        m_flags   = RANDOMX_FLAG_LARGE_PAGES;
-        m_dataset = randomx_alloc_dataset(static_cast<randomx_flags>(m_flags));
+    if (m_mode == RxConfig::LightMode) {
+        LOG_ERR(CLEAR "%s" RED_BOLD_S "fast RandomX mode disabled by config", Tags::randomx());
+
+        return;
     }
 
-    if (!m_dataset) {
-        m_flags   = RANDOMX_FLAG_DEFAULT;
-        m_dataset = randomx_alloc_dataset(static_cast<randomx_flags>(m_flags));
+    if (m_mode == RxConfig::AutoMode && uv_get_total_memory() < (maxSize() + RxCache::maxSize())) {
+        LOG_ERR(CLEAR "%s" RED_BOLD_S "not enough memory for RandomX dataset", Tags::randomx());
+
+        return;
     }
+
+    m_memory  = new VirtualMemory(maxSize(), hugePages, oneGbPages, false, m_node);
+
+    if (m_memory->isOneGbPages()) {
+        m_scratchpadOffset = maxSize() + RANDOMX_CACHE_MAX_SIZE;
+        m_scratchpadLimit = m_memory->capacity();
+    }
+
+    m_dataset = randomx_create_dataset(m_memory->raw());
+
+#   ifdef XMRIG_OS_LINUX
+    if (oneGbPages && !isOneGbPages()) {
+        LOG_ERR(CLEAR "%s" RED_BOLD_S "failed to allocate RandomX dataset using 1GB pages", Tags::randomx());
+    }
+#   endif
 }

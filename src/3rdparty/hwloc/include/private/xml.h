@@ -1,12 +1,12 @@
 /*
- * Copyright © 2009-2019 Inria.  All rights reserved.
+ * Copyright © 2009-2017 Inria.  All rights reserved.
  * See COPYING in top-level directory.
  */
 
 #ifndef PRIVATE_XML_H
 #define PRIVATE_XML_H 1
 
-#include <hwloc.h>
+#include "hwloc.h"
 
 #include <sys/types.h>
 
@@ -46,7 +46,7 @@ struct hwloc_xml_backend_data_s {
   int (*find_child)(struct hwloc__xml_import_state_s * state, struct hwloc__xml_import_state_s * childstate, char **tagp);
   int (*close_tag)(struct hwloc__xml_import_state_s * state); /* look for an explicit closing tag </name> */
   void (*close_child)(struct hwloc__xml_import_state_s * state);
-  int (*get_content)(struct hwloc__xml_import_state_s * state, char **beginp, size_t expected_length); /* return 0 on empty content (and sets beginp to empty string), 1 on actual content, -1 on error or unexpected content length */
+  int (*get_content)(struct hwloc__xml_import_state_s * state, const char **beginp, size_t expected_length); /* return 0 on empty content (and sets beginp to empty string), 1 on actual content, -1 on error or unexpected content length */
   void (*close_content)(struct hwloc__xml_import_state_s * state);
   char * msgprefix;
   void *data; /* libxml2 doc, or nolibxml buffer */
@@ -54,7 +54,6 @@ struct hwloc_xml_backend_data_s {
   unsigned nbnumanodes;
   hwloc_obj_t first_numanode, last_numanode; /* temporary cousin-list for handling v1distances */
   struct hwloc__xml_imported_v1distances_s *first_v1dist, *last_v1dist;
-  int dont_merge_die_groups;
 };
 
 /**************

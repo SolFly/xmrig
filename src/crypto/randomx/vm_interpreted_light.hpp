@@ -33,22 +33,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace randomx {
 
-	template<bool softAes>
+	template<int softAes>
 	class InterpretedLightVm : public InterpretedVm<softAes> {
 	public:
 		using VmBase<softAes>::mem;
 		using VmBase<softAes>::cachePtr;
 
-		void* operator new(size_t size) {
-			void* ptr = AlignedAllocator<CacheLineSize>::allocMemory(size);
-			if (ptr == nullptr)
-				throw std::bad_alloc();
-			return ptr;
-		}
-
-		void operator delete(void* ptr) {
-			AlignedAllocator<CacheLineSize>::freeMemory(ptr, sizeof(InterpretedLightVm));
-		}
+		void* operator new(size_t, void* ptr) { return ptr; }
+		void operator delete(void*) {}
 
 		void setDataset(randomx_dataset* dataset) override { }
 		void setCache(randomx_cache* cache) override;
@@ -58,6 +50,6 @@ namespace randomx {
 		void datasetPrefetch(uint64_t address) override { }
 	};
 
-	using InterpretedLightVmDefault = InterpretedLightVm<true>;
-	using InterpretedLightVmHardAes = InterpretedLightVm<false>;
+	using InterpretedLightVmDefault = InterpretedLightVm<1>;
+	using InterpretedLightVmHardAes = InterpretedLightVm<0>;
 }

@@ -5,8 +5,8 @@
  * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
  * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright 2018-2020 SChernykh   <https://github.com/SChernykh>
+ * Copyright 2016-2020 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -27,8 +27,8 @@
 
 
 #include "3rdparty/argon2.h"
+#include "base/crypto/Algorithm.h"
 #include "crypto/cn/CryptoNight.h"
-#include "crypto/common/Algorithm.h"
 
 
 namespace xmrig { namespace argon2 {
@@ -39,6 +39,9 @@ inline void single_hash(const uint8_t *__restrict__ input, size_t size, uint8_t 
 {
     if (ALGO == Algorithm::AR2_CHUKWA) {
         argon2id_hash_raw_ex(3, 512, 1, input, size, input, 16, output, 32, ctx[0]->memory);
+    }
+    else if (ALGO == Algorithm::AR2_CHUKWA_V2) {
+        argon2id_hash_raw_ex(4, 1024, 1, input, size, input, 16, output, 32, ctx[0]->memory);
     }
     else if (ALGO == Algorithm::AR2_WRKZ) {
         argon2id_hash_raw_ex(4, 256, 1, input, size, input, 16, output, 32, ctx[0]->memory);

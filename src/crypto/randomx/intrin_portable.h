@@ -102,6 +102,7 @@ typedef __m128d rx_vec_f128;
 #define rx_aligned_alloc(a, b) _mm_malloc(a,b)
 #define rx_aligned_free(a) _mm_free(a)
 #define rx_prefetch_nta(x) _mm_prefetch((const char *)(x), _MM_HINT_NTA)
+#define rx_prefetch_t0(x) _mm_prefetch((const char *)(x), _MM_HINT_T0)
 
 #define rx_load_vec_f128 _mm_load_pd
 #define rx_store_vec_f128 _mm_store_pd
@@ -201,6 +202,7 @@ typedef union{
 #define rx_aligned_alloc(a, b) malloc(a)
 #define rx_aligned_free(a) free(a)
 #define rx_prefetch_nta(x)
+#define rx_prefetch_t0(x)
 
 /* Splat 64-bit long long to 2 64-bit long longs */
 FORCE_INLINE __m128i vec_splat2sd (int64_t scalar)
@@ -399,6 +401,10 @@ inline void rx_prefetch_nta(void* ptr) {
 	asm volatile ("prfm pldl1strm, [%0]\n" : : "r" (ptr));
 }
 
+inline void rx_prefetch_t0(const void* ptr) {
+	asm volatile ("prfm pldl1strm, [%0]\n" : : "r" (ptr));
+}
+
 FORCE_INLINE rx_vec_f128 rx_load_vec_f128(const double* pd) {
 	return vld1q_f64((const float64_t*)pd);
 }
@@ -408,7 +414,7 @@ FORCE_INLINE void rx_store_vec_f128(double* mem_addr, rx_vec_f128 val) {
 }
 
 FORCE_INLINE rx_vec_f128 rx_swap_vec_f128(rx_vec_f128 a) {
-	float64x2_t temp;
+	float64x2_t temp{};
 	temp = vcopyq_laneq_f64(temp, 1, a, 1);
 	a = vcopyq_laneq_f64(a, 1, a, 0);
 	return vcopyq_laneq_f64(a, 0, temp, 1);
@@ -499,7 +505,7 @@ FORCE_INLINE void rx_store_vec_i128(rx_vec_i128* mem_addr, rx_vec_i128 val) {
 FORCE_INLINE rx_vec_f128 rx_cvt_packed_int_vec_f128(const void* addr) {
 	double lo = unsigned32ToSigned2sCompl(load32((uint8_t*)addr + 0));
 	double hi = unsigned32ToSigned2sCompl(load32((uint8_t*)addr + 4));
-	rx_vec_f128 x;
+	rx_vec_f128 x{};
 	x = vsetq_lane_f64(lo, x, 0);
 	x = vsetq_lane_f64(hi, x, 1);
 	return x;
@@ -532,6 +538,7 @@ typedef union {
 #define rx_aligned_alloc(a, b) malloc(a)
 #define rx_aligned_free(a) free(a)
 #define rx_prefetch_nta(x)
+#define rx_prefetch_t0(x)
 
 FORCE_INLINE rx_vec_f128 rx_load_vec_f128(const double* pd) {
 	rx_vec_f128 x;

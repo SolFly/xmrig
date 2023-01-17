@@ -1,6 +1,6 @@
 /*
  * Copyright © 2009 CNRS
- * Copyright © 2009-2017 Inria.  All rights reserved.
+ * Copyright © 2009-2021 Inria.  All rights reserved.
  * Copyright © 2009-2012 Université Bordeaux
  * Copyright © 2009-2010 Cisco Systems, Inc.  All rights reserved.
  * See COPYING in top-level directory.
@@ -21,12 +21,23 @@
 extern "C" {
 #endif
 
+/* backward compat with v2.0 before WHOLE_SYSTEM renaming */
+#define HWLOC_TOPOLOGY_FLAG_WHOLE_SYSTEM HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED
 /* backward compat with v1.11 before System removal */
 #define HWLOC_OBJ_SYSTEM HWLOC_OBJ_MACHINE
 /* backward compat with v1.10 before Socket->Package renaming */
 #define HWLOC_OBJ_SOCKET HWLOC_OBJ_PACKAGE
 /* backward compat with v1.10 before Node->NUMANode clarification */
 #define HWLOC_OBJ_NODE HWLOC_OBJ_NUMANODE
+
+/** \brief Add a distances structure.
+ *
+ * Superseded by hwloc_distances_add_create()+hwloc_distances_add_values()+hwloc_distances_add_commit()
+ * in v2.5.
+ */
+HWLOC_DECLSPEC int hwloc_distances_add(hwloc_topology_t topology,
+				       unsigned nbobjs, hwloc_obj_t *objs, hwloc_uint64_t *values,
+				       unsigned long kind, unsigned long flags) __hwloc_attribute_deprecated;
 
 /** \brief Insert a misc object by parent.
  *

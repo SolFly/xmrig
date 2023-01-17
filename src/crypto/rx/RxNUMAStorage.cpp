@@ -1,14 +1,7 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2019 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
- * Copyright 2018-2019 tevador     <tevador@gmail.com>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2019 tevador     <tevador@gmail.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -24,15 +17,13 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "crypto/rx/RxNUMAStorage.h"
-#include "backend/common/Tags.h"
 #include "backend/cpu/Cpu.h"
 #include "backend/cpu/platform/HwlocCpuInfo.h"
 #include "base/io/log/Log.h"
+#include "base/io/log/Tags.h"
 #include "base/kernel/Platform.h"
 #include "base/tools/Chrono.h"
-#include "base/tools/Object.h"
 #include "crypto/rx/RxAlgo.h"
 #include "crypto/rx/RxCache.h"
 #include "crypto/rx/RxDataset.h"
@@ -72,13 +63,13 @@ static bool bindToNUMANode(uint32_t nodeId)
 
 static inline void printSkipped(uint32_t nodeId, const char *reason)
 {
-    LOG_WARN("%s" CYAN_BOLD("#%u ") RED_BOLD("skipped") YELLOW(" (%s)"), rx_tag(), nodeId, reason);
+    LOG_WARN("%s" CYAN_BOLD("#%u ") RED_BOLD("skipped") YELLOW(" (%s)"), Tags::randomx(), nodeId, reason);
 }
 
 
 static inline void printDatasetReady(uint32_t nodeId, uint64_t ts)
 {
-    LOG_INFO("%s" CYAN_BOLD("#%u ") GREEN_BOLD("dataset ready") BLACK_BOLD(" (%" PRIu64 " ms)"), rx_tag(), nodeId, Chrono::steadyMSecs() - ts);
+    LOG_INFO("%s" CYAN_BOLD("#%u ") GREEN_BOLD("dataset ready") BLACK_BOLD(" (%" PRIu64 " ms)"), Tags::randomx(), nodeId, Chrono::steadyMSecs() - ts);
 }
 
 
@@ -87,7 +78,7 @@ class RxNUMAStoragePrivate
 public:
     XMRIG_DISABLE_COPY_MOVE_DEFAULT(RxNUMAStoragePrivate)
 
-    inline RxNUMAStoragePrivate(const std::vector<uint32_t> &nodeset) :
+    inline explicit RxNUMAStoragePrivate(const std::vector<uint32_t> &nodeset) :
         m_nodeset(nodeset)
     {
         m_threads.reserve(nodeset.size());
@@ -120,41 +111,73 @@ public:
     }
 
 
-    inline void createDatasets(bool hugePages)
+    inline bool createDatasets(bool hugePages, bool oneGbPages)
     {
         const uint64_t ts = Chrono::steadyMSecs();
 
         for (uint32_t node : m_nodeset) {
-            m_threads.emplace_back(allocate, this, node, hugePages);
+            m_threads.emplace_back(allocate, this, node, hugePages, oneGbPages);
         }
 
         join();
 
-        std::thread thread(allocateCache, this, m_nodeset.front(), hugePages);
-        thread.join();
+        if (isCacheRequired()) {
+            std::thread thread(allocateCache, this, m_nodeset.front(), hugePages);
+            thread.join();
+
+            if (!m_cache) {
+                return false;
+            }
+        }
 
         if (m_datasets.empty()) {
             m_datasets.insert({ m_nodeset.front(), new RxDataset(m_cache) });
 
-            LOG_WARN(CLEAR "%s" YELLOW_BOLD_S "failed to allocate RandomX datasets, switching to slow mode" BLACK_BOLD(" (%" PRIu64 " ms)"), rx_tag(), Chrono::steadyMSecs() - ts);
+            LOG_WARN(CLEAR "%s" YELLOW_BOLD_S "failed to allocate RandomX datasets, switching to slow mode" BLACK_BOLD(" (%" PRIu64 " ms)"), Tags::randomx(), Chrono::steadyMSecs() - ts);
         }
         else {
-            dataset(m_nodeset.front())->setCache(m_cache);
+            if (m_cache) {
+                dataset(m_nodeset.front())->setCache(m_cache);
+            }
 
             printAllocStatus(ts);
         }
 
         m_allocated = true;
+
+        return true;
     }
 
 
-    inline void initDatasets(uint32_t threads)
+    inline bool isCacheRequired() const
     {
-        uint64_t ts  = Chrono::steadyMSecs();
-        auto id      = m_nodeset.front();
-        auto primary = dataset(id);
+        if (m_datasets.empty()) {
+            return true;
+        }
 
-        primary->init(m_seed.data(), threads);
+        for (const auto &kv : m_datasets) {
+            if (kv.second->isOneGbPages()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+
+    inline void initDatasets(uint32_t threads, int priority)
+    {
+        uint64_t ts = Chrono::steadyMSecs();
+        uint32_t id = 0;
+
+        for (const auto &kv : m_datasets) {
+            if (kv.second->cache()) {
+                id = kv.first;
+            }
+        }
+
+        auto primary = dataset(id);
+        primary->init(m_seed.data(), threads, priority);
 
         printDatasetReady(id, ts);
 
@@ -174,13 +197,11 @@ public:
     }
 
 
-    inline std::pair<uint32_t, uint32_t> hugePages() const
+    inline HugePagesInfo hugePages() const
     {
-        auto pages = m_cache->hugePages();
+        HugePagesInfo pages;
         for (auto const &item : m_datasets) {
-            const auto p = item.second->hugePages(false);
-            pages.first  += p.first;
-            pages.second += p.second;
+            pages += item.second->hugePages();
         }
 
         return pages;
@@ -188,7 +209,7 @@ public:
 
 
 private:
-    static void allocate(RxNUMAStoragePrivate *d_ptr, uint32_t nodeId, bool hugePages)
+    static void allocate(RxNUMAStoragePrivate *d_ptr, uint32_t nodeId, bool hugePages, bool oneGbPages)
     {
         const uint64_t ts = Chrono::steadyMSecs();
 
@@ -198,7 +219,7 @@ private:
             return;
         }
 
-        auto dataset = new RxDataset(hugePages, false);
+        auto dataset = new RxDataset(hugePages, oneGbPages, false, RxConfig::FastMode, nodeId);
         if (!dataset->get()) {
             printSkipped(nodeId, "failed to allocate dataset");
 
@@ -208,7 +229,7 @@ private:
 
         std::lock_guard<std::mutex> lock(mutex);
         d_ptr->m_datasets.insert({ nodeId, dataset });
-        d_ptr->printAllocStatus(dataset, nodeId, ts);
+        RxNUMAStoragePrivate::printAllocStatus(dataset, nodeId, ts);
     }
 
 
@@ -218,11 +239,18 @@ private:
 
         bindToNUMANode(nodeId);
 
-        auto cache = new RxCache(hugePages);
+        auto cache = new RxCache(hugePages, nodeId);
+        if (!cache->get()) {
+            delete cache;
+
+            LOG_INFO("%s" RED_BOLD("failed to allocate RandomX memory") BLACK_BOLD(" (%" PRIu64 " ms)"), Tags::randomx(), Chrono::steadyMSecs() - ts);
+
+            return;
+        }
 
         std::lock_guard<std::mutex> lock(mutex);
         d_ptr->m_cache = cache;
-        d_ptr->printAllocStatus(cache, nodeId, ts);
+        RxNUMAStoragePrivate::printAllocStatus(cache, nodeId, ts);
     }
 
 
@@ -236,56 +264,48 @@ private:
     }
 
 
-    void printAllocStatus(RxDataset *dataset, uint32_t nodeId, uint64_t ts)
+    static void printAllocStatus(RxDataset *dataset, uint32_t nodeId, uint64_t ts)
     {
-        const auto pages     = dataset->hugePages();
-        const double percent = pages.first == 0 ? 0.0 : static_cast<double>(pages.first) / pages.second * 100.0;
+        const auto pages = dataset->hugePages();
 
         LOG_INFO("%s" CYAN_BOLD("#%u ") GREEN_BOLD("allocated") CYAN_BOLD(" %zu MB") " huge pages %s%3.0f%%" CLEAR BLACK_BOLD(" (%" PRIu64 " ms)"),
-                 rx_tag(),
+                 Tags::randomx(),
                  nodeId,
-                 dataset->size() / oneMiB,
-                 (pages.first == pages.second ? GREEN_BOLD_S : RED_BOLD_S),
-                 percent,
+                 pages.size / oneMiB,
+                 (pages.isFullyAllocated() ? GREEN_BOLD_S : RED_BOLD_S),
+                 pages.percent(),
                  Chrono::steadyMSecs() - ts
                  );
     }
 
 
-    void printAllocStatus(RxCache *cache, uint32_t nodeId, uint64_t ts)
+    static void printAllocStatus(RxCache *cache, uint32_t nodeId, uint64_t ts)
     {
-        const auto pages     = cache->hugePages();
-        const double percent = pages.first == 0 ? 0.0 : static_cast<double>(pages.first) / pages.second * 100.0;
+        const auto pages = cache->hugePages();
 
         LOG_INFO("%s" CYAN_BOLD("#%u ") GREEN_BOLD("allocated") CYAN_BOLD(" %4zu MB") " huge pages %s%3.0f%%" CLEAR " %sJIT" BLACK_BOLD(" (%" PRIu64 " ms)"),
-                 rx_tag(),
+                 Tags::randomx(),
                  nodeId,
                  cache->size() / oneMiB,
-                 (pages.first == pages.second ? GREEN_BOLD_S : RED_BOLD_S),
-                 percent,
+                 (pages.isFullyAllocated() ? GREEN_BOLD_S : RED_BOLD_S),
+                 pages.percent(),
                  cache->isJIT() ? GREEN_BOLD_S "+" : RED_BOLD_S "-",
                  Chrono::steadyMSecs() - ts
                  );
     }
 
 
-    void printAllocStatus(uint64_t ts)
+    void printAllocStatus(uint64_t ts) const
     {
-        size_t memory        = m_cache->size();
-        auto pages           = hugePages();
-        const double percent = pages.first == 0 ? 0.0 : static_cast<double>(pages.first) / pages.second * 100.0;
-
-        for (auto const &item : m_datasets) {
-            memory += item.second->size(false);
-        }
+        auto pages = hugePages();
 
         LOG_INFO("%s" CYAN_BOLD("-- ") GREEN_BOLD("allocated") CYAN_BOLD(" %4zu MB") " huge pages %s%3.0f%% %u/%u" CLEAR BLACK_BOLD(" (%" PRIu64 " ms)"),
-                 rx_tag(),
-                 memory / oneMiB,
-                 (pages.first == pages.second ? GREEN_BOLD_S : (pages.first == 0 ? RED_BOLD_S : YELLOW_BOLD_S)),
-                 percent,
-                 pages.first,
-                 pages.second,
+                 Tags::randomx(),
+                 pages.size / oneMiB,
+                 (pages.isFullyAllocated() ? GREEN_BOLD_S : (pages.allocated == 0 ? RED_BOLD_S : YELLOW_BOLD_S)),
+                 pages.percent(),
+                 pages.allocated,
+                 pages.total,
                  Chrono::steadyMSecs() - ts
                  );
     }
@@ -326,6 +346,22 @@ xmrig::RxNUMAStorage::~RxNUMAStorage()
 }
 
 
+bool xmrig::RxNUMAStorage::isAllocated() const
+{
+    return d_ptr->isAllocated();
+}
+
+
+xmrig::HugePagesInfo xmrig::RxNUMAStorage::hugePages() const
+{
+    if (!d_ptr->isAllocated()) {
+        return {};
+    }
+
+    return d_ptr->hugePages();
+}
+
+
 xmrig::RxDataset *xmrig::RxNUMAStorage::dataset(const Job &job, uint32_t nodeId) const
 {
     if (!d_ptr->isReady(job)) {
@@ -336,23 +372,13 @@ xmrig::RxDataset *xmrig::RxNUMAStorage::dataset(const Job &job, uint32_t nodeId)
 }
 
 
-std::pair<uint32_t, uint32_t> xmrig::RxNUMAStorage::hugePages() const
-{
-    if (!d_ptr->isAllocated()) {
-        return { 0u, 0u };
-    }
-
-    return d_ptr->hugePages();
-}
-
-
-void xmrig::RxNUMAStorage::init(const RxSeed &seed, uint32_t threads, bool hugePages)
+void xmrig::RxNUMAStorage::init(const RxSeed &seed, uint32_t threads, bool hugePages, bool oneGbPages, RxConfig::Mode, int priority)
 {
     d_ptr->setSeed(seed);
 
-    if (!d_ptr->isAllocated()) {
-        d_ptr->createDatasets(hugePages);
+    if (!d_ptr->isAllocated() && !d_ptr->createDatasets(hugePages, oneGbPages)) {
+        return;
     }
 
-    d_ptr->initDatasets(threads);
+    d_ptr->initDatasets(threads, priority);
 }

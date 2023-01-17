@@ -1,5 +1,7 @@
 /*
-Copyright (c) 2018-2019, tevador <tevador@gmail.com>
+Copyright (c) 2018-2020, tevador    <tevador@gmail.com>
+Copyright (c) 2019-2020, SChernykh  <https://github.com/SChernykh>
+Copyright (c) 2019-2020, XMRig      <https://github.com/xmrig>, <support@xmrig.com>
 
 All rights reserved.
 
@@ -41,69 +43,107 @@ namespace randomx {
 	class JitCompilerX86;
 	class Instruction;
 
-	typedef void(JitCompilerX86::*InstructionGeneratorX86)(const Instruction&);
+	typedef void(*InstructionGeneratorX86)(JitCompilerX86*, const Instruction&);
 
 	constexpr uint32_t CodeSize = 64 * 1024;
 
 	class JitCompilerX86 {
 	public:
-		JitCompilerX86();
+		explicit JitCompilerX86(bool hugePagesEnable, bool optimizedInitDatasetEnable);
 		~JitCompilerX86();
-		void generateProgram(Program&, ProgramConfiguration&);
+		void prepare();
+		void generateProgram(Program&, ProgramConfiguration&, uint32_t);
 		void generateProgramLight(Program&, ProgramConfiguration&, uint32_t);
 		template<size_t N>
-		void generateSuperscalarHash(SuperscalarProgram (&programs)[N], std::vector<uint64_t> &);
+		void generateSuperscalarHash(SuperscalarProgram (&programs)[N]);
 		void generateDatasetInitCode();
-		ProgramFunc* getProgramFunc() {
-			return (ProgramFunc*)code;
+
+		inline ProgramFunc *getProgramFunc() const {
+#			ifdef XMRIG_SECURE_JIT
+			enableExecution();
+#			endif
+
+			return reinterpret_cast<ProgramFunc*>(code);
 		}
-		DatasetInitFunc* getDatasetInitFunc() {
+
+		inline DatasetInitFunc *getDatasetInitFunc() const {
+# 			ifdef XMRIG_SECURE_JIT
+			enableExecution();
+#			endif
+
 			return (DatasetInitFunc*)code;
 		}
+
 		uint8_t* getCode() {
 			return code;
 		}
 		size_t getCodeSize();
+		void enableWriting() const;
+		void enableExecution() const;
 
-		static InstructionGeneratorX86 engine[256];
-		int registerUsage[RegistersCount];
-		uint8_t* code;
-		int32_t codePos;
+		alignas(64) static InstructionGeneratorX86 engine[256];
+
+	private:
+		int registerUsage[RegistersCount] = {};
+		uint8_t* code = nullptr;
+		uint32_t codePos = 0;
+		uint32_t codePosFirst = 0;
+		uint32_t vm_flags = 0;
+		uint32_t prevCFROUND = 0;
+
+#		ifdef XMRIG_FIX_RYZEN
+		std::pair<const void*, const void*> mainLoopBounds;
+#		endif
+
+		bool BranchesWithin32B = false;
+		bool hasAVX;
+		bool hasAVX2;
+		bool initDatasetAVX2;
+		bool hasXOP;
+
+		uint8_t* allocatedCode = nullptr;
+		size_t allocatedSize = 0;
+
+		uint8_t* imul_rcp_storage = nullptr;
+		uint32_t imul_rcp_storage_used = 0;
 
 		void generateProgramPrologue(Program&, ProgramConfiguration&);
 		void generateProgramEpilogue(Program&, ProgramConfiguration&);
-		static void genAddressReg(const Instruction&, uint8_t* code, int& codePos, bool rax = true);
-		static void genAddressRegDst(const Instruction&, uint8_t* code, int& codePos);
-		static void genAddressImm(const Instruction&, uint8_t* code, int& codePos);
-		static void genSIB(int scale, int index, int base, uint8_t* code, int& codePos);
+		template<bool rax>
+		static void genAddressReg(const Instruction&, const uint32_t src, uint8_t* code, uint32_t& codePos);
+		static void genAddressRegDst(const Instruction&, uint8_t* code, uint32_t& codePos);
+		static void genAddressImm(const Instruction&, uint8_t* code, uint32_t& codePos);
+		static uint32_t genSIB(int scale, int index, int base) { return (scale << 6) | (index << 3) | base; }
 
-		void generateSuperscalarCode(Instruction &, std::vector<uint64_t> &);
+		template<bool AVX2>
+		void generateSuperscalarCode(Instruction& inst, uint8_t* code, uint32_t& codePos);
 
-		static void emitByte(uint8_t val, uint8_t* code, int& codePos) {
+		static void emitByte(uint8_t val, uint8_t* code, uint32_t& codePos) {
 			code[codePos] = val;
 			++codePos;
 		}
 
-		static void emit32(uint32_t val, uint8_t* code, int& codePos) {
+		static void emit32(uint32_t val, uint8_t* code, uint32_t& codePos) {
 			memcpy(code + codePos, &val, sizeof val);
 			codePos += sizeof val;
 		}
 
-		static void emit64(uint64_t val, uint8_t* code, int& codePos) {
+		static void emit64(uint64_t val, uint8_t* code, uint32_t& codePos) {
 			memcpy(code + codePos, &val, sizeof val);
 			codePos += sizeof val;
 		}
 
 		template<size_t N>
-		static void emit(const uint8_t (&src)[N], uint8_t* code, int& codePos) {
+		static void emit(const uint8_t (&src)[N], uint8_t* code, uint32_t& codePos) {
 			emit(src, N, code, codePos);
 		}
 
-		static void emit(const uint8_t* src, size_t count, uint8_t* code, int& codePos) {
+		static void emit(const uint8_t* src, size_t count, uint8_t* code, uint32_t& codePos) {
 			memcpy(code + codePos, src, count);
 			codePos += count;
 		}
 
+	public:
 		void h_IADD_RS(const Instruction&);
 		void h_IADD_M(const Instruction&);
 		void h_ISUB_R(const Instruction&);
@@ -111,7 +151,9 @@ namespace randomx {
 		void h_IMUL_R(const Instruction&);
 		void h_IMUL_M(const Instruction&);
 		void h_IMULH_R(const Instruction&);
+		void h_IMULH_R_BMI2(const Instruction&);
 		void h_IMULH_M(const Instruction&);
+		void h_IMULH_M_BMI2(const Instruction&);
 		void h_ISMULH_R(const Instruction&);
 		void h_ISMULH_M(const Instruction&);
 		void h_IMUL_RCP(const Instruction&);
@@ -130,10 +172,13 @@ namespace randomx {
 		void h_FMUL_R(const Instruction&);
 		void h_FDIV_M(const Instruction&);
 		void h_FSQRT_R(const Instruction&);
+
+		template<bool jccErratum>
 		void h_CBRANCH(const Instruction&);
+
 		void h_CFROUND(const Instruction&);
+		void h_CFROUND_BMI2(const Instruction&);
 		void h_ISTORE(const Instruction&);
 		void h_NOP(const Instruction&);
 	};
-
 }

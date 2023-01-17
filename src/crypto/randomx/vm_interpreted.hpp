@@ -38,7 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace randomx {
 
-	template<bool softAes>
+	template<int softAes>
 	class InterpretedVm : public VmBase<softAes>, public BytecodeMachine {
 	public:
 		using VmBase<softAes>::mem;
@@ -49,16 +49,8 @@ namespace randomx {
 		using VmBase<softAes>::datasetPtr;
 		using VmBase<softAes>::datasetOffset;
 
-		void* operator new(size_t size) {
-			void* ptr = AlignedAllocator<CacheLineSize>::allocMemory(size);
-			if (ptr == nullptr)
-				throw std::bad_alloc();
-			return ptr;
-		}
-
-		void operator delete(void* ptr) {
-			AlignedAllocator<CacheLineSize>::freeMemory(ptr, sizeof(InterpretedVm));
-		}
+		void* operator new(size_t, void* ptr) { return ptr; }
+		void operator delete(void*) {}
 
 		void run(void* seed) override;
 		void setDataset(randomx_dataset* dataset) override;
@@ -73,6 +65,6 @@ namespace randomx {
 		InstructionByteCode bytecode[RANDOMX_PROGRAM_MAX_SIZE];
 	};
 
-	using InterpretedVmDefault = InterpretedVm<true>;
-	using InterpretedVmHardAes = InterpretedVm<false>;
+	using InterpretedVmDefault = InterpretedVm<1>;
+	using InterpretedVmHardAes = InterpretedVm<0>;
 }

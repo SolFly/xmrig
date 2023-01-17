@@ -1,6 +1,6 @@
 /*
  * Copyright © 2009 CNRS
- * Copyright © 2009-2019 Inria.  All rights reserved.
+ * Copyright © 2009-2021 Inria.  All rights reserved.
  * Copyright © 2009-2012 Université Bordeaux
  * Copyright © 2009-2010 Cisco Systems, Inc.  All rights reserved.
  * See COPYING in top-level directory.
@@ -527,30 +527,36 @@ hwloc_obj_type_is_io(hwloc_obj_type_t type);
  *
  * Memory objects are objects attached to their parents
  * in the Memory children list.
- * This current only includes NUMA nodes.
+ * This current includes NUMA nodes and Memory-side caches.
  *
  * \return 1 if an object of type \p type is a Memory object, 0 otherwise.
  */
 HWLOC_DECLSPEC int
 hwloc_obj_type_is_memory(hwloc_obj_type_t type);
 
-/** \brief Check whether an object type is a Cache (Data, Unified or Instruction).
+/** \brief Check whether an object type is a CPU Cache (Data, Unified or Instruction).
+ *
+ * Memory-side caches are not CPU caches.
  *
  * \return 1 if an object of type \p type is a Cache, 0 otherwise.
  */
 HWLOC_DECLSPEC int
 hwloc_obj_type_is_cache(hwloc_obj_type_t type);
 
-/** \brief Check whether an object type is a Data or Unified Cache.
+/** \brief Check whether an object type is a CPU Data or Unified Cache.
  *
- * \return 1 if an object of type \p type is a Data or Unified Cache, 0 otherwise.
+ * Memory-side caches are not CPU caches.
+ *
+ * \return 1 if an object of type \p type is a CPU Data or Unified Cache, 0 otherwise.
  */
 HWLOC_DECLSPEC int
 hwloc_obj_type_is_dcache(hwloc_obj_type_t type);
 
-/** \brief Check whether an object type is a Instruction Cache,
+/** \brief Check whether an object type is a CPU Instruction Cache,
  *
- * \return 1 if an object of type \p type is a Instruction Cache, 0 otherwise.
+ * Memory-side caches are not CPU caches.
+ *
+ * \return 1 if an object of type \p type is a CPU Instruction Cache, 0 otherwise.
  */
 HWLOC_DECLSPEC int
 hwloc_obj_type_is_icache(hwloc_obj_type_t type);
@@ -665,6 +671,24 @@ hwloc_get_shared_cache_covering_obj (hwloc_topology_t topology __hwloc_attribute
  * relationships, and an example of an asymmetric topology where one
  * package has fewer caches than its peers.
  */
+
+/** \brief Remove simultaneous multithreading PUs from a CPU set.
+ *
+ * For each core in \p topology, if \p cpuset contains some PUs of that core,
+ * modify \p cpuset to only keep a single PU for that core.
+ *
+ * \p which specifies which PU will be kept.
+ * PU are considered in physical index order.
+ * If 0, for each core, the function keeps the first PU that was originally set in \p cpuset.
+ *
+ * If \p which is larger than the number of PUs in a core there were originally set in \p cpuset,
+ * no PU is kept for that core.
+ *
+ * \note PUs that are not below a Core object are ignored
+ * (for instance if the topology does not contain any Core object).
+ * None of them is removed from \p cpuset.
+ */
+HWLOC_DECLSPEC int hwloc_bitmap_singlify_per_core(hwloc_topology_t topology, hwloc_bitmap_t cpuset, unsigned which);
 
 /** \brief Returns the object of type ::HWLOC_OBJ_PU with \p os_index.
  *
@@ -783,6 +807,49 @@ hwloc_get_obj_below_array_by_type (hwloc_topology_t topology, int nr, hwloc_obj_
   return obj;
 }
 
+/** \brief Return an object of a different type with same locality.
+ *
+ * If the source object \p src is a normal or memory type,
+ * this function returns an object of type \p type with same
+ * CPU and node sets, either below or above in the hierarchy.
+ *
+ * If the source object \p src is a PCI or an OS device within a PCI
+ * device, the function may either return that PCI device, or another
+ * OS device in the same PCI parent.
+ * This may for instance be useful for converting between OS devices
+ * such as "nvml0" or "rsmi1" used in distance structures into the
+ * the PCI device, or the CUDA or OpenCL OS device that correspond
+ * to the same physical card.
+ *
+ * If not \c NULL, parameter \p subtype only select objects whose
+ * subtype attribute exists and is \p subtype (case-insensitively),
+ * for instance "OpenCL" or "CUDA".
+ *
+ * If not \c NULL, parameter \p nameprefix only selects objects whose
+ * name attribute exists and starts with \p nameprefix (case-insensitively),
+ * for instance "rsmi" for matching "rsmi0".
+ *
+ * If multiple objects match, the first one is returned.
+ *
+ * This function will not walk the hierarchy across bridges since
+ * the PCI locality may become different.
+ * This function cannot also convert between normal/memory objects
+ * and I/O or Misc objects.
+ *
+ * \p flags must be \c 0 for now.
+ *
+ * \return An object with identical locality,
+ * matching \p subtype and \p nameprefix if any.
+ *
+ * \return \c NULL if no matching object could be found,
+ * or if the source object and target type are incompatible,
+ * for instance if converting between CPU and I/O objects.
+ */
+HWLOC_DECLSPEC hwloc_obj_t
+hwloc_get_obj_with_same_locality(hwloc_topology_t topology, hwloc_obj_t src,
+                                 hwloc_obj_type_t type, const char *subtype, const char *nameprefix,
+                                 unsigned long flags);
+
 /** @} */
 
 
@@ -848,8 +915,8 @@ hwloc_distrib(hwloc_topology_t topology,
     unsigned chunk, weight;
     hwloc_obj_t root = roots[flags & HWLOC_DISTRIB_FLAG_REVERSE ? n_roots-1-i : i];
     hwloc_cpuset_t cpuset = root->cpuset;
-    if (root->type == HWLOC_OBJ_NUMANODE)
-      /* NUMANodes have same cpuset as their parent, but we need normal objects below */
+    while (!hwloc_obj_type_is_normal(root->type))
+      /* If memory/io/misc, walk up to normal parent */
       root = root->parent;
     weight = (unsigned) hwloc_bitmap_weight(cpuset);
     if (!weight)
@@ -895,7 +962,7 @@ hwloc_distrib(hwloc_topology_t topology,
 
 /** \brief Get complete CPU set
  *
- * \return the complete CPU set of logical processors of the system.
+ * \return the complete CPU set of processors of the system.
  *
  * \note The returned cpuset is not newly allocated and should thus not be
  * changed or freed; hwloc_bitmap_dup() must be used to obtain a local copy.
@@ -907,27 +974,27 @@ hwloc_topology_get_complete_cpuset(hwloc_topology_t topology) __hwloc_attribute_
 
 /** \brief Get topology CPU set
  *
- * \return the CPU set of logical processors of the system for which hwloc
+ * \return the CPU set of processors of the system for which hwloc
  * provides topology information. This is equivalent to the cpuset of the
  * system object.
  *
  * \note The returned cpuset is not newly allocated and should thus not be
  * changed or freed; hwloc_bitmap_dup() must be used to obtain a local copy.
  *
- * \note This is equivalent to retrieving the root object complete CPU-set.
+ * \note This is equivalent to retrieving the root object CPU-set.
  */
 HWLOC_DECLSPEC hwloc_const_cpuset_t
 hwloc_topology_get_topology_cpuset(hwloc_topology_t topology) __hwloc_attribute_pure;
 
 /** \brief Get allowed CPU set
  *
- * \return the CPU set of allowed logical processors of the system.
+ * \return the CPU set of allowed processors of the system.
  *
- * \note If the topology flag ::HWLOC_TOPOLOGY_FLAG_WHOLE_SYSTEM was not set,
+ * \note If the topology flag ::HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED was not set,
  * this is identical to hwloc_topology_get_topology_cpuset(), which means
  * all PUs are allowed.
  *
- * \note If ::HWLOC_TOPOLOGY_FLAG_WHOLE_SYSTEM was set, applying
+ * \note If ::HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED was set, applying
  * hwloc_bitmap_intersects() on the result of this function and on an object
  * cpuset checks whether there are allowed PUs inside that object.
  * Applying hwloc_bitmap_and() returns the list of these allowed PUs.
@@ -945,7 +1012,7 @@ hwloc_topology_get_allowed_cpuset(hwloc_topology_t topology) __hwloc_attribute_p
  * \note The returned nodeset is not newly allocated and should thus not be
  * changed or freed; hwloc_bitmap_dup() must be used to obtain a local copy.
  *
- * \note This is equivalent to retrieving the root object complete CPU-set.
+ * \note This is equivalent to retrieving the root object complete nodeset.
  */
 HWLOC_DECLSPEC hwloc_const_nodeset_t
 hwloc_topology_get_complete_nodeset(hwloc_topology_t topology) __hwloc_attribute_pure;
@@ -959,7 +1026,7 @@ hwloc_topology_get_complete_nodeset(hwloc_topology_t topology) __hwloc_attribute
  * \note The returned nodeset is not newly allocated and should thus not be
  * changed or freed; hwloc_bitmap_dup() must be used to obtain a local copy.
  *
- * \note This is equivalent to retrieving the root object complete CPU-set.
+ * \note This is equivalent to retrieving the root object nodeset.
  */
 HWLOC_DECLSPEC hwloc_const_nodeset_t
 hwloc_topology_get_topology_nodeset(hwloc_topology_t topology) __hwloc_attribute_pure;
@@ -968,11 +1035,11 @@ hwloc_topology_get_topology_nodeset(hwloc_topology_t topology) __hwloc_attribute
  *
  * \return the node set of allowed memory of the system.
  *
- * \note If the topology flag ::HWLOC_TOPOLOGY_FLAG_WHOLE_SYSTEM was not set,
+ * \note If the topology flag ::HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED was not set,
  * this is identical to hwloc_topology_get_topology_nodeset(), which means
  * all NUMA nodes are allowed.
  *
- * \note If ::HWLOC_TOPOLOGY_FLAG_WHOLE_SYSTEM was set, applying
+ * \note If ::HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED was set, applying
  * hwloc_bitmap_intersects() on the result of this function and on an object
  * nodeset checks whether there are allowed NUMA nodes inside that object.
  * Applying hwloc_bitmap_and() returns the list of these allowed NUMA nodes.
@@ -992,15 +1059,16 @@ hwloc_topology_get_allowed_nodeset(hwloc_topology_t topology) __hwloc_attribute_
  * @{
  */
 
-/** \brief Convert a CPU set into a NUMA node set and handle non-NUMA cases
+/** \brief Convert a CPU set into a NUMA node set
+ *
+ * For each PU included in the input \p _cpuset, set the corresponding
+ * local NUMA node(s) in the output \p nodeset.
  *
  * If some NUMA nodes have no CPUs at all, this function never sets their
  * indexes in the output node set, even if a full CPU set is given in input.
  *
- * If the topology contains no NUMA nodes, the machine is considered
- * as a single memory node, and the following behavior is used:
- * If \p cpuset is empty, \p nodeset will be emptied as well.
- * Otherwise \p nodeset will be entirely filled.
+ * Hence the entire topology CPU set is converted into the set of all nodes
+ * that have some local CPUs.
  */
 static __hwloc_inline int
 hwloc_cpuset_to_nodeset(hwloc_topology_t topology, hwloc_const_cpuset_t _cpuset, hwloc_nodeset_t nodeset)
@@ -1015,13 +1083,16 @@ hwloc_cpuset_to_nodeset(hwloc_topology_t topology, hwloc_const_cpuset_t _cpuset,
 	return 0;
 }
 
-/** \brief Convert a NUMA node set into a CPU set and handle non-NUMA cases
+/** \brief Convert a NUMA node set into a CPU set
  *
- * If the topology contains no NUMA nodes, the machine is considered
- * as a single memory node, and the following behavior is used:
- * If \p nodeset is empty, \p cpuset will be emptied as well.
- * Otherwise \p cpuset will be entirely filled.
- * This is useful for manipulating memory binding sets.
+ * For each NUMA node included in the input \p nodeset, set the corresponding
+ * local PUs in the output \p _cpuset.
+ *
+ * If some CPUs have no local NUMA nodes, this function never sets their
+ * indexes in the output CPU set, even if a full node set is given in input.
+ *
+ * Hence the entire topology node set is converted into the set of all CPUs
+ * that have some local NUMA nodes.
  */
 static __hwloc_inline int
 hwloc_cpuset_from_nodeset(hwloc_topology_t topology, hwloc_cpuset_t _cpuset, hwloc_const_nodeset_t nodeset)

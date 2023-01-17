@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2020 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2020 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -21,7 +15,6 @@
  *   You should have received a copy of the GNU General Public License
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-
 
 #include "backend/opencl/runners/tools/OclSharedData.h"
 #include "backend/opencl/wrappers/OclLib.h"
@@ -40,12 +33,19 @@
 constexpr size_t oneGiB = 1024 * 1024 * 1024;
 
 
-cl_mem xmrig::OclSharedData::createBuffer(cl_context context, size_t size, size_t &offset)
+cl_mem xmrig::OclSharedData::createBuffer(cl_context context, size_t size, size_t &offset, size_t limit)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    offset += size * m_offset++;
-    size   = std::max(size * m_threads, oneGiB);
+    const size_t pos = offset + (size * m_offset);
+    size             = std::max(size * m_threads, oneGiB);
+
+    if (size > limit) {
+        return nullptr;
+    }
+
+    offset = pos;
+    ++m_offset;
 
     if (!m_buffer) {
         m_buffer = OclLib::createBuffer(context, CL_MEM_READ_WRITE, size);
@@ -55,7 +55,7 @@ cl_mem xmrig::OclSharedData::createBuffer(cl_context context, size_t size, size_
 }
 
 
-uint64_t xmrig::OclSharedData::adjustDelay(size_t id)
+uint64_t xmrig::OclSharedData::adjustDelay(size_t /*id*/)
 {
     if (m_threads < 2) {
         return 0;
@@ -96,7 +96,7 @@ uint64_t xmrig::OclSharedData::adjustDelay(size_t id)
 }
 
 
-uint64_t xmrig::OclSharedData::resumeDelay(size_t id)
+uint64_t xmrig::OclSharedData::resumeDelay(size_t /*id*/)
 {
     if (m_threads < 2) {
         return 0;
@@ -180,7 +180,7 @@ void xmrig::OclSharedData::createDataset(cl_context ctx, const Job &job, bool ho
         return;
     }
 
-    cl_int ret;
+    cl_int ret = 0;
 
     if (host) {
         auto dataset = Rx::dataset(job, 0);

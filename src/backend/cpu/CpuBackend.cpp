@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -22,17 +16,18 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include <mutex>
 
 
+#include "backend/cpu/CpuBackend.h"
+#include "3rdparty/rapidjson/document.h"
 #include "backend/common/Hashrate.h"
 #include "backend/common/interfaces/IWorker.h"
 #include "backend/common/Tags.h"
 #include "backend/common/Workers.h"
 #include "backend/cpu/Cpu.h"
-#include "backend/cpu/CpuBackend.h"
 #include "base/io/log/Log.h"
+#include "base/io/log/Tags.h"
 #include "base/net/stratum/Job.h"
 #include "base/tools/Chrono.h"
 #include "base/tools/String.h"
@@ -41,7 +36,6 @@
 #include "crypto/common/VirtualMemory.h"
 #include "crypto/rx/Rx.h"
 #include "crypto/rx/RxDataset.h"
-#include "rapidjson/document.h"
 
 
 #ifdef XMRIG_FEATURE_API
@@ -54,13 +48,18 @@
 #endif
 
 
+#ifdef XMRIG_FEATURE_BENCHMARK
+#   include "backend/common/benchmark/Benchmark.h"
+#   include "backend/common/benchmark/BenchState.h"
+#endif
+
+
 namespace xmrig {
 
 
 extern template class Threads<CpuThreads>;
 
 
-static const char *tag      = CYAN_BG_BOLD(WHITE_BOLD_S " cpu ");
 static const String kType   = "cpu";
 static std::mutex mutex;
 
@@ -68,33 +67,34 @@ static std::mutex mutex;
 struct CpuLaunchStatus
 {
 public:
-    inline size_t hugePages() const     { return m_hugePages; }
-    inline size_t memory() const        { return m_ways * m_memory; }
-    inline size_t pages() const         { return m_pages; }
-    inline size_t threads() const       { return m_threads; }
-    inline size_t ways() const          { return m_ways; }
+    inline const HugePagesInfo &hugePages() const   { return m_hugePages; }
+    inline size_t memory() const                    { return m_ways * m_memory; }
+    inline size_t threads() const                   { return m_threads; }
+    inline size_t ways() const                      { return m_ways; }
 
     inline void start(const std::vector<CpuLaunchData> &threads, size_t memory)
     {
-        m_hugePages = 0;
-        m_memory    = memory;
-        m_pages     = 0;
-        m_started   = 0;
-        m_errors    = 0;
-        m_threads   = threads.size();
-        m_ways      = 0;
-        m_ts        = Chrono::steadyMSecs();
+        m_workersMemory.clear();
+        m_hugePages.reset();
+        m_memory       = memory;
+        m_started      = 0;
+        m_totalStarted = 0;
+        m_errors       = 0;
+        m_threads      = threads.size();
+        m_ways         = 0;
+        m_ts           = Chrono::steadyMSecs();
     }
 
     inline bool started(IWorker *worker, bool ready)
     {
         if (ready) {
-            auto hugePages = worker->memory()->hugePages();
-
             m_started++;
-            m_hugePages += hugePages.first;
-            m_pages     += hugePages.second;
-            m_ways      += worker->intensity();
+            m_totalStarted += worker->threads();
+
+            if (m_workersMemory.insert(worker->memory()).second) {
+                m_hugePages += worker->memory()->hugePages();
+            }
+            m_ways += worker->intensity();
         }
         else {
             m_errors++;
@@ -106,29 +106,30 @@ public:
     inline void print() const
     {
         if (m_started == 0) {
-            LOG_ERR("%s " RED_BOLD("disabled") YELLOW(" (failed to start threads)"), tag);
+            LOG_ERR("%s " RED_BOLD("disabled") YELLOW(" (failed to start threads)"), Tags::cpu());
 
             return;
         }
 
         LOG_INFO("%s" GREEN_BOLD(" READY") " threads %s%zu/%zu (%zu)" CLEAR " huge pages %s%1.0f%% %zu/%zu" CLEAR " memory " CYAN_BOLD("%zu KB") BLACK_BOLD(" (%" PRIu64 " ms)"),
-                 tag,
+                 Tags::cpu(),
                  m_errors == 0 ? CYAN_BOLD_S : YELLOW_BOLD_S,
-                 m_started, m_threads, m_ways,
-                 (m_hugePages == m_pages ? GREEN_BOLD_S : (m_hugePages == 0 ? RED_BOLD_S : YELLOW_BOLD_S)),
-                 m_hugePages == 0 ? 0.0 : static_cast<double>(m_hugePages) / m_pages * 100.0,
-                 m_hugePages, m_pages,
+                 m_totalStarted, std::max(m_totalStarted, m_threads), m_ways,
+                 (m_hugePages.isFullyAllocated() ? GREEN_BOLD_S : (m_hugePages.allocated == 0 ? RED_BOLD_S : YELLOW_BOLD_S)),
+                 m_hugePages.percent(),
+                 m_hugePages.allocated, m_hugePages.total,
                  memory() / 1024,
                  Chrono::steadyMSecs() - m_ts
                  );
     }
 
 private:
+    std::set<const VirtualMemory*> m_workersMemory;
+    HugePagesInfo m_hugePages;
     size_t m_errors       = 0;
-    size_t m_hugePages    = 0;
     size_t m_memory       = 0;
-    size_t m_pages        = 0;
     size_t m_started      = 0;
+    size_t m_totalStarted = 0;
     size_t m_threads      = 0;
     size_t m_ways         = 0;
     uint64_t m_ts         = 0;
@@ -138,16 +139,13 @@ private:
 class CpuBackendPrivate
 {
 public:
-    inline CpuBackendPrivate(Controller *controller) :
-        controller(controller)
-    {
-    }
+    inline explicit CpuBackendPrivate(Controller *controller) : controller(controller)   {}
 
 
     inline void start()
     {
         LOG_INFO("%s use profile " BLUE_BG(WHITE_BOLD_S " %s ") WHITE_BOLD_S " (" CYAN_BOLD("%zu") WHITE_BOLD(" thread%s)") " scratchpad " CYAN_BOLD("%zu KB"),
-                 tag,
+                 Tags::cpu(),
                  profileName.data(),
                  threads.size(),
                  threads.size() > 1 ? "s" : "",
@@ -155,11 +153,16 @@ public:
                  );
 
         status.start(threads, algo.l3());
+
+#       ifdef XMRIG_FEATURE_BENCHMARK
+        workers.start(threads, benchmark);
+#       else
         workers.start(threads);
+#       endif
     }
 
 
-    size_t ways()
+    size_t ways() const
     {
         std::lock_guard<std::mutex> lock(mutex);
 
@@ -167,20 +170,19 @@ public:
     }
 
 
-    rapidjson::Value hugePages(int version, rapidjson::Document &doc)
+    rapidjson::Value hugePages(int version, rapidjson::Document &doc) const
     {
-        std::pair<unsigned, unsigned> pages(0, 0);
+        HugePagesInfo pages;
 
     #   ifdef XMRIG_ALGO_RANDOMX
         if (algo.family() == Algorithm::RANDOM_X) {
-            pages = Rx::hugePages();
+            pages += Rx::hugePages();
         }
     #   endif
 
         mutex.lock();
 
-        pages.first  += status.hugePages();
-        pages.second += status.pages();
+        pages += status.hugePages();
 
         mutex.unlock();
 
@@ -188,11 +190,11 @@ public:
 
         if (version > 1) {
             hugepages.SetArray();
-            hugepages.PushBack(pages.first, doc.GetAllocator());
-            hugepages.PushBack(pages.second, doc.GetAllocator());
+            hugepages.PushBack(static_cast<uint64_t>(pages.allocated), doc.GetAllocator());
+            hugepages.PushBack(static_cast<uint64_t>(pages.total), doc.GetAllocator());
         }
         else {
-            hugepages = pages.first == pages.second;
+            hugepages = pages.isFullyAllocated();
         }
 
         return hugepages;
@@ -205,6 +207,10 @@ public:
     std::vector<CpuLaunchData> threads;
     String profileName;
     Workers<CpuLaunchData> workers;
+
+#   ifdef XMRIG_FEATURE_BENCHMARK
+    std::shared_ptr<Benchmark> benchmark;
+#   endif
 };
 
 
@@ -225,13 +231,13 @@ const char *xmrig::backend_tag(uint32_t backend)
     }
 #   endif
 
-    return tag;
+    return Tags::cpu();
 }
 
 
 const char *xmrig::cpu_tag()
 {
-    return tag;
+    return Tags::cpu();
 }
 
 
@@ -260,6 +266,12 @@ bool xmrig::CpuBackend::isEnabled(const Algorithm &algorithm) const
 }
 
 
+bool xmrig::CpuBackend::tick(uint64_t ticks)
+{
+    return d_ptr->workers.tick(ticks);
+}
+
+
 const xmrig::Hashrate *xmrig::CpuBackend::hashrate() const
 {
     return d_ptr->workers.hashrate();
@@ -281,12 +293,15 @@ const xmrig::String &xmrig::CpuBackend::type() const
 void xmrig::CpuBackend::prepare(const Job &nextJob)
 {
 #   ifdef XMRIG_ALGO_ARGON2
-    if (nextJob.algorithm().family() == Algorithm::ARGON2 && argon2::Impl::select(d_ptr->controller->config()->cpu().argon2Impl())) {
-        LOG_INFO("%s use " WHITE_BOLD("argon2") " implementation " CSI "1;%dm" "%s",
-                 tag,
-                 argon2::Impl::name() == "default" ? 33 : 32,
-                 argon2::Impl::name().data()
-                 );
+    const auto f = nextJob.algorithm().family();
+    if ((f == Algorithm::ARGON2) || (f == Algorithm::RANDOM_X)) {
+        if (argon2::Impl::select(d_ptr->controller->config()->cpu().argon2Impl())) {
+            LOG_INFO("%s use " WHITE_BOLD("argon2") " implementation " CSI "1;%dm" "%s",
+                     Tags::cpu(),
+                     argon2::Impl::name() == "default" ? 33 : 32,
+                     argon2::Impl::name().data()
+                     );
+        }
     }
 #   endif
 }
@@ -315,13 +330,16 @@ void xmrig::CpuBackend::printHashrate(bool details)
          i++;
     }
 
-#   ifdef XMRIG_FEATURE_OPENCL
     Log::print(WHITE_BOLD_S "|        - |        - | %7s | %7s | %7s |",
                Hashrate::format(hashrate()->calc(Hashrate::ShortInterval),  num,         sizeof num / 3),
                Hashrate::format(hashrate()->calc(Hashrate::MediumInterval), num + 8,     sizeof num / 3),
                Hashrate::format(hashrate()->calc(Hashrate::LargeInterval),  num + 8 * 2, sizeof num / 3)
                );
-#   endif
+}
+
+
+void xmrig::CpuBackend::printHealth()
+{
 }
 
 
@@ -331,9 +349,9 @@ void xmrig::CpuBackend::setJob(const Job &job)
         return stop();
     }
 
-    const CpuConfig &cpu = d_ptr->controller->config()->cpu();
+    const auto &cpu = d_ptr->controller->config()->cpu();
 
-    std::vector<CpuLaunchData> threads = cpu.get(d_ptr->controller->miner(), job.algorithm());
+    auto threads = cpu.get(d_ptr->controller->miner(), job.algorithm());
     if (!d_ptr->threads.empty() && d_ptr->threads.size() == threads.size() && std::equal(d_ptr->threads.begin(), d_ptr->threads.end(), threads.begin())) {
         return;
     }
@@ -342,12 +360,18 @@ void xmrig::CpuBackend::setJob(const Job &job)
     d_ptr->profileName  = cpu.threads().profileName(job.algorithm());
 
     if (d_ptr->profileName.isNull() || threads.empty()) {
-        LOG_WARN("%s " RED_BOLD("disabled") YELLOW(" (no suitable configuration found)"), tag);
+        LOG_WARN("%s " RED_BOLD("disabled") YELLOW(" (no suitable configuration found)"), Tags::cpu());
 
         return stop();
     }
 
     stop();
+
+#   ifdef XMRIG_FEATURE_BENCHMARK
+    if (BenchState::size()) {
+        d_ptr->benchmark = std::make_shared<Benchmark>(threads.size(), this);
+    }
+#   endif
 
     d_ptr->threads = std::move(threads);
     d_ptr->start();
@@ -381,13 +405,7 @@ void xmrig::CpuBackend::stop()
     d_ptr->workers.stop();
     d_ptr->threads.clear();
 
-    LOG_INFO("%s" YELLOW(" stopped") BLACK_BOLD(" (%" PRIu64 " ms)"), tag, Chrono::steadyMSecs() - ts);
-}
-
-
-void xmrig::CpuBackend::tick(uint64_t ticks)
-{
-    d_ptr->workers.tick(ticks);
+    LOG_INFO("%s" YELLOW(" stopped") BLACK_BOLD(" (%" PRIu64 " ms)"), Tags::cpu(), Chrono::steadyMSecs() - ts);
 }
 
 
@@ -405,6 +423,7 @@ rapidjson::Value xmrig::CpuBackend::toJSON(rapidjson::Document &doc) const
     out.AddMember("profile",    profileName().toJSON(), allocator);
     out.AddMember("hw-aes",     cpu.isHwAES(), allocator);
     out.AddMember("priority",   cpu.priority(), allocator);
+    out.AddMember("msr",        Rx::isMSR(), allocator);
 
 #   ifdef XMRIG_FEATURE_ASM
     const Assembly assembly = Cpu::assembly(cpu.assembly());
@@ -450,6 +469,22 @@ void xmrig::CpuBackend::handleRequest(IApiRequest &request)
 {
     if (request.type() == IApiRequest::REQ_SUMMARY) {
         request.reply().AddMember("hugepages", d_ptr->hugePages(request.version(), request.doc()), request.doc().GetAllocator());
+    }
+}
+#endif
+
+
+#ifdef XMRIG_FEATURE_BENCHMARK
+xmrig::Benchmark *xmrig::CpuBackend::benchmark() const
+{
+    return d_ptr->benchmark.get();
+}
+
+
+void xmrig::CpuBackend::printBenchProgress() const
+{
+    if (d_ptr->benchmark) {
+        d_ptr->benchmark->printProgress();
     }
 }
 #endif

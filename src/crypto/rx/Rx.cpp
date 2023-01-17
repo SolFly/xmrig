@@ -1,14 +1,7 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2019 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018      Lee Clagett <https://github.com/vtnerd>
- * Copyright 2018-2019 tevador     <tevador@gmail.com>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2019 tevador     <tevador@gmail.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -24,12 +17,19 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "crypto/rx/Rx.h"
-#include "backend/common/Tags.h"
-#include "base/io/log/Log.h"
+#include "backend/cpu/CpuConfig.h"
+#include "backend/cpu/CpuThreads.h"
 #include "crypto/rx/RxConfig.h"
 #include "crypto/rx/RxQueue.h"
+#include "crypto/randomx/randomx.h"
+#include "crypto/randomx/aes_hash.hpp"
+
+
+#ifdef XMRIG_FEATURE_MSR
+#   include "crypto/rx/RxFix.h"
+#   include "crypto/rx/RxMsr.h"
+#endif
 
 
 namespace xmrig {
@@ -38,14 +38,14 @@ namespace xmrig {
 class RxPrivate;
 
 
-static const char *tag  = BLUE_BG(WHITE_BOLD_S " rx  ") " ";
-static RxPrivate *d_ptr = nullptr;
+static bool osInitialized   = false;
+static RxPrivate *d_ptr     = nullptr;
 
 
 class RxPrivate
 {
 public:
-    inline RxPrivate(IRxListener *listener) : queue(listener) {}
+    inline explicit RxPrivate(IRxListener *listener) : queue(listener) {}
 
     RxQueue queue;
 };
@@ -54,31 +54,9 @@ public:
 } // namespace xmrig
 
 
-const char *xmrig::rx_tag()
+xmrig::HugePagesInfo xmrig::Rx::hugePages()
 {
-    return tag;
-}
-
-
-bool xmrig::Rx::init(const Job &job, const RxConfig &config, bool hugePages)
-{
-    if (job.algorithm().family() != Algorithm::RANDOM_X) {
-        return true;
-    }
-
-    if (isReady(job)) {
-        return true;
-    }
-
-    d_ptr->queue.enqueue(job, config.nodeset(), config.threads(), hugePages);
-
-    return false;
-}
-
-
-bool xmrig::Rx::isReady(const Job &job)
-{
-    return d_ptr->queue.isReady(job);
+    return d_ptr->queue.hugePages();
 }
 
 
@@ -88,14 +66,12 @@ xmrig::RxDataset *xmrig::Rx::dataset(const Job &job, uint32_t nodeId)
 }
 
 
-std::pair<uint32_t, uint32_t> xmrig::Rx::hugePages()
-{
-    return d_ptr->queue.hugePages();
-}
-
-
 void xmrig::Rx::destroy()
 {
+#   ifdef XMRIG_FEATURE_MSR
+    RxMsr::destroy();
+#   endif
+
     delete d_ptr;
 
     d_ptr = nullptr;
@@ -106,3 +82,92 @@ void xmrig::Rx::init(IRxListener *listener)
 {
     d_ptr = new RxPrivate(listener);
 }
+
+
+template<typename T>
+bool xmrig::Rx::init(const T &seed, const RxConfig &config, const CpuConfig &cpu)
+{
+    const auto f = seed.algorithm().family();
+    if ((f != Algorithm::RANDOM_X)
+#       ifdef XMRIG_ALGO_CN_HEAVY
+        && (f != Algorithm::CN_HEAVY)
+#       endif
+#       ifdef XMRIG_ALGO_GHOSTRIDER
+        && (f != Algorithm::GHOSTRIDER)
+#       endif
+        ) {
+#       ifdef XMRIG_FEATURE_MSR
+        RxMsr::destroy();
+#       endif
+
+        return true;
+    }
+
+#   ifdef XMRIG_FEATURE_MSR
+    if (!RxMsr::isInitialized()) {
+        RxMsr::init(config, cpu.threads().get(seed.algorithm()).data());
+    }
+#   endif
+
+#   ifdef XMRIG_ALGO_CN_HEAVY
+    if (f == Algorithm::CN_HEAVY) {
+        return true;
+    }
+#   endif
+
+#   ifdef XMRIG_ALGO_GHOSTRIDER
+    if (f == Algorithm::GHOSTRIDER) {
+        return true;
+    }
+#   endif
+
+    randomx_set_scratchpad_prefetch_mode(config.scratchpadPrefetchMode());
+    randomx_set_huge_pages_jit(cpu.isHugePagesJit());
+    randomx_set_optimized_dataset_init(config.initDatasetAVX2());
+
+    if (!osInitialized) {
+#       ifdef XMRIG_FIX_RYZEN
+        RxFix::setupMainLoopExceptionFrame();
+#       endif
+
+        if (!cpu.isHwAES()) {
+            SelectSoftAESImpl(cpu.threads().get(seed.algorithm()).count());
+        }
+        osInitialized = true;
+    }
+
+    if (isReady(seed)) {
+        return true;
+    }
+
+    d_ptr->queue.enqueue(seed, config.nodeset(), config.threads(cpu.limit()), cpu.isHugePages(), config.isOneGbPages(), config.mode(), cpu.priority());
+
+    return false;
+}
+
+
+template<typename T>
+bool xmrig::Rx::isReady(const T &seed)
+{
+    return d_ptr->queue.isReady(seed);
+}
+
+
+#ifdef XMRIG_FEATURE_MSR
+bool xmrig::Rx::isMSR()
+{
+    return RxMsr::isEnabled();
+}
+#endif
+
+
+namespace xmrig {
+
+
+template bool Rx::init(const RxSeed &seed, const RxConfig &config, const CpuConfig &cpu);
+template bool Rx::isReady(const RxSeed &seed);
+template bool Rx::init(const Job &seed, const RxConfig &config, const CpuConfig &cpu);
+template bool Rx::isReady(const Job &seed);
+
+
+} // namespace xmrig

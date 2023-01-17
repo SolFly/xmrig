@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -22,6 +16,7 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+
 #ifndef XMRIG_THREADS_H
 #define XMRIG_THREADS_H
 
@@ -30,9 +25,9 @@
 #include <set>
 
 
+#include "3rdparty/rapidjson/fwd.h"
+#include "base/crypto/Algorithm.h"
 #include "base/tools/String.h"
-#include "crypto/common/Algorithm.h"
-#include "rapidjson/fwd.h"
 
 
 namespace xmrig {
@@ -45,7 +40,7 @@ public:
     inline bool has(const char *profile) const                                         { return m_profiles.count(profile) > 0; }
     inline bool isDisabled(const Algorithm &algo) const                                { return m_disabled.count(algo) > 0; }
     inline bool isEmpty() const                                                        { return m_profiles.empty(); }
-    inline bool isExist(const Algorithm &algo) const                                   { return isDisabled(algo) || m_aliases.count(algo) > 0 || has(algo.shortName()); }
+    inline bool isExist(const Algorithm &algo) const                                   { return isDisabled(algo) || m_aliases.count(algo) > 0 || has(algo.name()); }
     inline const T &get(const Algorithm &algo, bool strict = false) const              { return get(profileName(algo, strict)); }
     inline void disable(const Algorithm &algo)                                         { m_disabled.insert(algo); }
     inline void setAlias(const Algorithm &algo, const char *profile)                   { m_aliases[algo] = profile; }

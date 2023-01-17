@@ -48,6 +48,8 @@ enum randomx_flags {
   RANDOMX_FLAG_HARD_AES = 2,
   RANDOMX_FLAG_FULL_MEM = 4,
   RANDOMX_FLAG_JIT = 8,
+  RANDOMX_FLAG_1GB_PAGES = 16,
+  RANDOMX_FLAG_AMD = 64,
 };
 
 
@@ -62,15 +64,24 @@ struct RandomX_ConfigurationBase
 
 	void Apply();
 
-	uint32_t ArgonMemory;
+	// Common parameters for all RandomX variants
+	enum Params : uint64_t
+	{
+		ArgonMemory = 262144,
+		CacheAccesses = 8,
+		SuperscalarLatency = 170,
+		DatasetBaseSize = 2147483648,
+		DatasetExtraSize = 33554368,
+		JumpBits = 8,
+		JumpOffset = 8,
+		CacheLineAlignMask_Calculated = (DatasetBaseSize - 1) & ~(RANDOMX_DATASET_ITEM_SIZE - 1),
+		DatasetExtraItems_Calculated = DatasetExtraSize / RANDOMX_DATASET_ITEM_SIZE,
+		ConditionMask_Calculated = ((1 << JumpBits) - 1) << JumpOffset,
+	};
+
 	uint32_t ArgonIterations;
 	uint32_t ArgonLanes;
 	const char* ArgonSalt;
-	uint32_t CacheAccesses;
-	uint32_t SuperscalarLatency;
-
-	uint32_t DatasetBaseSize;
-	uint32_t DatasetExtraSize;
 
 	uint32_t ScratchpadL1_Size;
 	uint32_t ScratchpadL2_Size;
@@ -79,9 +90,6 @@ struct RandomX_ConfigurationBase
 	uint32_t ProgramSize;
 	uint32_t ProgramIterations;
 	uint32_t ProgramCount;
-
-	uint32_t JumpBits;
-	uint32_t JumpOffset;
 
 	uint32_t RANDOMX_FREQ_IADD_RS;
 	uint32_t RANDOMX_FREQ_IADD_M;
@@ -116,72 +124,36 @@ struct RandomX_ConfigurationBase
 
 	rx_vec_i128 fillAes4Rx4_Key[8];
 
-	uint8_t codeShhPrefetchTweaked[20];
-	uint8_t codeReadDatasetTweaked[64];
-	uint8_t codeReadDatasetLightSshInitTweaked[68];
-	uint8_t codePrefetchScratchpadTweaked[32];
+	uint8_t codeSshPrefetchTweaked[20];
+	uint8_t codePrefetchScratchpadTweaked[28];
+	uint32_t codePrefetchScratchpadTweakedSize;
 
-	uint32_t CacheLineAlignMask_Calculated;
-	uint32_t DatasetExtraItems_Calculated;
-
-	uint32_t ScratchpadL1Mask_Calculated;
-	uint32_t ScratchpadL1Mask16_Calculated;
-	uint32_t ScratchpadL2Mask_Calculated;
-	uint32_t ScratchpadL2Mask16_Calculated;
+	uint32_t AddressMask_Calculated[4];
 	uint32_t ScratchpadL3Mask_Calculated;
 	uint32_t ScratchpadL3Mask64_Calculated;
 
-	uint32_t ConditionMask_Calculated;
-
-#ifdef XMRIG_ARM
+#	if (XMRIG_ARM == 8)
 	uint32_t Log2_ScratchpadL1;
 	uint32_t Log2_ScratchpadL2;
 	uint32_t Log2_ScratchpadL3;
 	uint32_t Log2_DatasetBaseSize;
 	uint32_t Log2_CacheSize;
-#endif
-
-	int CEIL_IADD_RS;
-	int CEIL_IADD_M;
-	int CEIL_ISUB_R;
-	int CEIL_ISUB_M;
-	int CEIL_IMUL_R;
-	int CEIL_IMUL_M;
-	int CEIL_IMULH_R;
-	int CEIL_IMULH_M;
-	int CEIL_ISMULH_R;
-	int CEIL_ISMULH_M;
-	int CEIL_IMUL_RCP;
-	int CEIL_INEG_R;
-	int CEIL_IXOR_R;
-	int CEIL_IXOR_M;
-	int CEIL_IROR_R;
-	int CEIL_IROL_R;
-	int CEIL_ISWAP_R;
-	int CEIL_FSWAP_R;
-	int CEIL_FADD_R;
-	int CEIL_FADD_M;
-	int CEIL_FSUB_R;
-	int CEIL_FSUB_M;
-	int CEIL_FSCAL_R;
-	int CEIL_FMUL_R;
-	int CEIL_FDIV_M;
-	int CEIL_FSQRT_R;
-	int CEIL_CBRANCH;
-	int CEIL_CFROUND;
-	int CEIL_ISTORE;
-	int CEIL_NOP;
+#	endif
 };
 
 struct RandomX_ConfigurationMonero : public RandomX_ConfigurationBase {};
 struct RandomX_ConfigurationWownero : public RandomX_ConfigurationBase { RandomX_ConfigurationWownero(); };
-struct RandomX_ConfigurationLoki : public RandomX_ConfigurationBase { RandomX_ConfigurationLoki(); };
 struct RandomX_ConfigurationArqma : public RandomX_ConfigurationBase { RandomX_ConfigurationArqma(); };
+struct RandomX_ConfigurationGraft : public RandomX_ConfigurationBase { RandomX_ConfigurationGraft(); };
+struct RandomX_ConfigurationSafex : public RandomX_ConfigurationBase { RandomX_ConfigurationSafex(); };
+struct RandomX_ConfigurationKeva : public RandomX_ConfigurationBase { RandomX_ConfigurationKeva(); };
 
 extern RandomX_ConfigurationMonero RandomX_MoneroConfig;
 extern RandomX_ConfigurationWownero RandomX_WowneroConfig;
-extern RandomX_ConfigurationLoki RandomX_LokiConfig;
 extern RandomX_ConfigurationArqma RandomX_ArqmaConfig;
+extern RandomX_ConfigurationGraft RandomX_GraftConfig;
+extern RandomX_ConfigurationSafex RandomX_SafexConfig;
+extern RandomX_ConfigurationKeva RandomX_KevaConfig;
 
 extern RandomX_ConfigurationBase RandomX_CurrentConfig;
 
@@ -193,6 +165,10 @@ void randomx_apply_config(const T& config)
 	RandomX_CurrentConfig = config;
 	RandomX_CurrentConfig.Apply();
 }
+
+void randomx_set_scratchpad_prefetch_mode(int mode);
+void randomx_set_huge_pages_jit(bool hugePages);
+void randomx_set_optimized_dataset_init(int value);
 
 #if defined(__cplusplus)
 extern "C" {
@@ -210,7 +186,7 @@ extern "C" {
  *         NULL is returned if memory allocation fails or if the RANDOMX_FLAG_JIT
  *         is set and JIT compilation is not supported on the current platform.
  */
-RANDOMX_EXPORT randomx_cache *randomx_alloc_cache(randomx_flags flags);
+RANDOMX_EXPORT randomx_cache *randomx_create_cache(randomx_flags flags, uint8_t *memory);
 
 /**
  * Initializes the cache memory and SuperscalarHash using the provided key value.
@@ -237,7 +213,7 @@ RANDOMX_EXPORT void randomx_release_cache(randomx_cache* cache);
  * @return Pointer to an allocated randomx_dataset structure.
  *         NULL is returned if memory allocation fails.
  */
-RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset(randomx_flags flags);
+RANDOMX_EXPORT randomx_dataset *randomx_create_dataset(uint8_t *memory);
 
 /**
  * Gets the number of items contained in the dataset.
@@ -299,7 +275,7 @@ RANDOMX_EXPORT void randomx_release_dataset(randomx_dataset *dataset);
  *         (3) cache parameter is NULL and RANDOMX_FLAG_FULL_MEM is not set
  *         (4) dataset parameter is NULL and RANDOMX_FLAG_FULL_MEM is set
 */
-RANDOMX_EXPORT randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache *cache, randomx_dataset *dataset, uint8_t *scratchpad);
+RANDOMX_EXPORT randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache *cache, randomx_dataset *dataset, uint8_t *scratchpad, uint32_t node);
 
 /**
  * Reinitializes a virtual machine with a new Cache. This function should be called anytime
@@ -337,6 +313,9 @@ RANDOMX_EXPORT void randomx_destroy_vm(randomx_vm *machine);
  *        be NULL and at least RANDOMX_HASH_SIZE bytes must be available for writing.
 */
 RANDOMX_EXPORT void randomx_calculate_hash(randomx_vm *machine, const void *input, size_t inputSize, void *output);
+
+RANDOMX_EXPORT void randomx_calculate_hash_first(randomx_vm* machine, uint64_t (&tempHash)[8], const void* input, size_t inputSize);
+RANDOMX_EXPORT void randomx_calculate_hash_next(randomx_vm* machine, uint64_t (&tempHash)[8], const void* nextInput, size_t nextInputSize, void* output);
 
 #if defined(__cplusplus)
 }

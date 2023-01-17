@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -23,9 +17,9 @@
  */
 
 #include "backend/opencl/runners/OclRxJitRunner.h"
-
 #include "backend/opencl/cl/rx/randomx_run_gfx803.h"
 #include "backend/opencl/cl/rx/randomx_run_gfx900.h"
+#include "backend/opencl/cl/rx/randomx_run_gfx1010.h"
 #include "backend/opencl/kernels/rx/Blake2bHashRegistersKernel.h"
 #include "backend/opencl/kernels/rx/HashAesKernel.h"
 #include "backend/opencl/kernels/rx/RxJitKernel.h"
@@ -84,7 +78,7 @@ void xmrig::OclRxJitRunner::execute(uint32_t iteration)
 
     OclLib::finish(m_queue);
 
-    m_randomx_run->enqueue(m_queue, m_intensity);
+    m_randomx_run->enqueue(m_queue, m_intensity, (m_gcn_version == 15) ? 32 : 64);
 }
 
 
@@ -105,7 +99,7 @@ bool xmrig::OclRxJitRunner::loadAsmProgram()
     uint32_t elf_header_flags = 0;
     const uint32_t elf_header_flags_offset = 0x30;
 
-    size_t bin_size;
+    size_t bin_size = 0;
     if (OclLib::getProgramInfo(m_program, CL_PROGRAM_BINARY_SIZES, sizeof(bin_size), &bin_size) != CL_SUCCESS) {
         return false;
     }
@@ -120,16 +114,31 @@ bool xmrig::OclRxJitRunner::loadAsmProgram()
         elf_header_flags = *reinterpret_cast<uint32_t*>((binary_data.data() + elf_header_flags_offset));
     }
 
-    const size_t len      = (m_gcn_version == 14) ? randomx_run_gfx900_bin_size : randomx_run_gfx803_bin_size;
-    unsigned char *binary = (m_gcn_version == 14) ? randomx_run_gfx900_bin      : randomx_run_gfx803_bin;
+    size_t len              = 0;
+    unsigned char *binary   = nullptr;
+
+    switch (m_gcn_version) {
+    case 14:
+        len = randomx_run_gfx900_bin_size;
+        binary = randomx_run_gfx900_bin;
+        break;
+    case 15:
+        len = randomx_run_gfx1010_bin_size;
+        binary = randomx_run_gfx1010_bin;
+        break;
+    default:
+        len = randomx_run_gfx803_bin_size;
+        binary = randomx_run_gfx803_bin;
+        break;
+    }
 
     // Set correct internal device ID in the pre-compiled binary
     if (elf_header_flags) {
         *reinterpret_cast<uint32_t*>(binary + elf_header_flags_offset) = elf_header_flags;
     }
 
-    cl_int status;
-    cl_int ret;
+    cl_int status   = 0;
+    cl_int ret      = 0;
     cl_device_id device = data().device.id();
 
     m_asmProgram = OclLib::createProgramWithBinary(ctx(), 1, &device, &len, (const unsigned char**) &binary, &status, &ret);

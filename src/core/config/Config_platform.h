@@ -1,12 +1,6 @@
 /* XMRig
- * Copyright 2010      Jeff Garzik <jgarzik@pobox.com>
- * Copyright 2012-2014 pooler      <pooler@litecoinpool.org>
- * Copyright 2014      Lucas Jones <https://github.com/lucasjones>
- * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
- * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
- * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
- * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -40,7 +34,7 @@
 namespace xmrig {
 
 
-static const char short_options[] = "a:c:kBp:Px:r:R:s:t:T:o:u:O:v:l:S";
+static const char short_options[] = "a:c:kBp:Px:r:R:s:t:T:o:u:O:v:l:Sx:";
 
 
 static const option options[] = {
@@ -57,6 +51,8 @@ static const option options[] = {
     { "daemon",                0, nullptr, IConfig::DaemonKey             },
     { "daemon-poll-interval",  1, nullptr, IConfig::DaemonPollKey         },
     { "self-select",           1, nullptr, IConfig::SelfSelectKey         },
+    { "submit-to-origin",      0, nullptr, IConfig::SubmitToOriginKey     },
+    { "daemon-zmq-port",       1, nullptr, IConfig::DaemonZMQPortKey      },
 #   endif
     { "av",                    1, nullptr, IConfig::AVKey                 },
     { "background",            0, nullptr, IConfig::BackgroundKey         },
@@ -71,6 +67,11 @@ static const option options[] = {
     { "nicehash",              0, nullptr, IConfig::NicehashKey           },
     { "no-color",              0, nullptr, IConfig::ColorKey              },
     { "no-huge-pages",         0, nullptr, IConfig::HugePagesKey          },
+    { "no-hugepages",          0, nullptr, IConfig::HugePagesKey          },
+    { "hugepage-size",         1, nullptr, IConfig::HugePageSizeKey       },
+    { "huge-pages-jit",        0, nullptr, IConfig::HugePagesJitKey       },
+    { "hugepages-jit",         0, nullptr, IConfig::HugePagesJitKey       },
+    { "rotation",              1, nullptr, IConfig::RotationKey           },
     { "pass",                  1, nullptr, IConfig::PasswordKey           },
     { "print-time",            1, nullptr, IConfig::PrintTimeKey          },
     { "retries",               1, nullptr, IConfig::RetriesKey            },
@@ -86,9 +87,42 @@ static const option options[] = {
     { "max-cpu-usage",         1, nullptr, IConfig::CPUMaxThreadsKey      },
     { "cpu-max-threads-hint",  1, nullptr, IConfig::CPUMaxThreadsKey      },
     { "cpu-memory-pool",       1, nullptr, IConfig::MemoryPoolKey         },
+    { "cpu-no-yield",          0, nullptr, IConfig::YieldKey              },
+    { "no-yield",              0, nullptr, IConfig::YieldKey              },
+    { "cpu-argon2-impl",       1, nullptr, IConfig::Argon2ImplKey         },
+    { "argon2-impl",           1, nullptr, IConfig::Argon2ImplKey         },
+    { "verbose",               0, nullptr, IConfig::VerboseKey            },
+    { "proxy",                 1, nullptr, IConfig::ProxyKey              },
+    { "data-dir",              1, nullptr, IConfig::DataDirKey            },
+    { "title",                 1, nullptr, IConfig::TitleKey              },
+    { "no-title",              0, nullptr, IConfig::NoTitleKey            },
+    { "pause-on-battery",      0, nullptr, IConfig::PauseOnBatteryKey     },
+    { "pause-on-active",       1, nullptr, IConfig::PauseOnActiveKey      },
+    { "dns-ipv6",              0, nullptr, IConfig::DnsIPv6Key            },
+    { "dns-ttl",               1, nullptr, IConfig::DnsTtlKey             },
+    { "spend-secret-key",      1, nullptr, IConfig::SpendSecretKey        },
+#   ifdef XMRIG_FEATURE_BENCHMARK
+    { "stress",                0, nullptr, IConfig::StressKey             },
+    { "bench",                 1, nullptr, IConfig::BenchKey              },
+    { "benchmark",             1, nullptr, IConfig::BenchKey              },
+#   ifdef XMRIG_FEATURE_HTTP
+    { "submit",                0, nullptr, IConfig::BenchSubmitKey        },
+    { "verify",                1, nullptr, IConfig::BenchVerifyKey        },
+    { "token",                 1, nullptr, IConfig::BenchTokenKey         },
+#   endif
+    { "seed",                  1, nullptr, IConfig::BenchSeedKey          },
+    { "hash",                  1, nullptr, IConfig::BenchHashKey          },
+#   endif
 #   ifdef XMRIG_FEATURE_TLS
     { "tls",                   0, nullptr, IConfig::TlsKey                },
     { "tls-fingerprint",       1, nullptr, IConfig::FingerprintKey        },
+    { "tls-cert",              1, nullptr, IConfig::TlsCertKey            },
+    { "tls-cert-key",          1, nullptr, IConfig::TlsCertKeyKey         },
+    { "tls-dhparam",           1, nullptr, IConfig::TlsDHparamKey         },
+    { "tls-protocols",         1, nullptr, IConfig::TlsProtocolsKey       },
+    { "tls-ciphers",           1, nullptr, IConfig::TlsCiphersKey         },
+    { "tls-ciphersuites",      1, nullptr, IConfig::TlsCipherSuitesKey    },
+    { "tls-gen",               1, nullptr, IConfig::TlsGenKey             },
 #   endif
 #   ifdef XMRIG_FEATURE_ASM
     { "asm",                   1, nullptr, IConfig::AssemblyKey           },
@@ -96,6 +130,15 @@ static const option options[] = {
 #   ifdef XMRIG_ALGO_RANDOMX
     { "randomx-init",          1, nullptr, IConfig::RandomXInitKey        },
     { "randomx-no-numa",       0, nullptr, IConfig::RandomXNumaKey        },
+    { "randomx-mode",          1, nullptr, IConfig::RandomXModeKey        },
+    { "randomx-1gb-pages",     0, nullptr, IConfig::RandomX1GbPagesKey    },
+    { "1gb-pages",             0, nullptr, IConfig::RandomX1GbPagesKey    },
+    { "randomx-wrmsr",         2, nullptr, IConfig::RandomXWrmsrKey       },
+    { "wrmsr",                 2, nullptr, IConfig::RandomXWrmsrKey       },
+    { "randomx-no-rdmsr",      0, nullptr, IConfig::RandomXRdmsrKey       },
+    { "no-rdmsr",              0, nullptr, IConfig::RandomXRdmsrKey       },
+    { "randomx-cache-qos",     0, nullptr, IConfig::RandomXCacheQoSKey    },
+    { "cache-qos",             0, nullptr, IConfig::RandomXCacheQoSKey    },
 #   endif
 #   ifdef XMRIG_FEATURE_OPENCL
     { "opencl",                0, nullptr, IConfig::OclKey                },
@@ -108,10 +151,17 @@ static const option options[] = {
     { "cuda",                  0, nullptr, IConfig::CudaKey               },
     { "cuda-loader",           1, nullptr, IConfig::CudaLoaderKey         },
     { "cuda-devices",          1, nullptr, IConfig::CudaDevicesKey        },
+    { "cuda-bfactor-hint",     1, nullptr, IConfig::CudaBFactorKey        },
+    { "cuda-bsleep-hint",      1, nullptr, IConfig::CudaBSleepKey         },
 #   endif
 #   ifdef XMRIG_FEATURE_NVML
     { "no-nvml",               0, nullptr, IConfig::NvmlKey               },
+#   endif
+#   if defined(XMRIG_FEATURE_NVML) || defined (XMRIG_FEATURE_ADL)
     { "health-print-time",     1, nullptr, IConfig::HealthPrintTimeKey    },
+#   endif
+#   ifdef XMRIG_FEATURE_DMI
+    { "no-dmi",                0, nullptr, IConfig::DmiKey                },
 #   endif
     { nullptr,                 0, nullptr, 0 }
 };
