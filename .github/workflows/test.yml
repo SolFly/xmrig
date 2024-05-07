@@ -1,9 +1,7 @@
-on:
-  push:
-    tags:
-    - 'v*'
 
-name: Create release and build artifacts
+on: push
+
+name: Test builds
 
 jobs:
   build_win:
