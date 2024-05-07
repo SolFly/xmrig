@@ -29,7 +29,7 @@ jobs:
           name: windows_build
           path: windows_build.zip
 
-  build_lin:
+  build_ubnt-22:
     name: Build Ubuntu artifacts
     runs-on: ubuntu-22.04
     steps:
@@ -44,12 +44,34 @@ jobs:
           cmake .
           make -j$(nproc)
           cp src/config.json .
-          tar cfz ubuntu_build.tar.gz xmrig config.json
+          tar cfz ubuntu-22_build.tar.gz xmrig config.json
       - name: Upload Ubuntu build artifacts
         uses: actions/upload-artifact@v1
         with:
-          name: ubuntu_build
-          path: ubuntu_build.tar.gz
+          name: ubuntu-22_build
+          path: ubuntu-22_build.tar.gz
+          
+  build_ubnt-20:
+    name: Build Ubuntu-20
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Prepare Ubuntu tools
+        run: |
+          sudo apt update
+          sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev
+      - name: Checkout code
+        uses: actions/checkout@master
+      - name: Build project on Ubuntu
+        run: |
+          cmake .
+          make -j$(nproc)
+          cp src/config.json .
+          tar cfz ubuntu-20_build.tar.gz xmrig config.json
+      - name: Upload Ubuntu build artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: ubuntu-20_build
+          path: ubuntu-20_build.tar.gz
 
   build_macos:
     name: Build MacOS artifacts
@@ -82,7 +104,7 @@ jobs:
 
 
   deploy:
-    needs: [build_win, build_lin, build_macos]
+    needs: [build_win, build_ubnt-22, build_ubnt-20, build_macos]
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
@@ -92,7 +114,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: refs/tags/v6.21.3
+          tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
@@ -103,10 +125,14 @@ jobs:
         uses: actions/download-artifact@v1
         with:
           name: windows_build
-      - name: Download Ubuntu build artifacts
+      - name: Download Ubuntu-22 build artifacts
         uses: actions/download-artifact@v1
         with:
-          name: ubuntu_build
+          name: ubuntu-22_build
+      - name: Download Ubuntu-20 build artifacts
+        uses: actions/download-artifact@v1
+        with:
+          name: ubuntu-20_build
       - name: Download MacOS build artifacts
         uses: actions/download-artifact@v1
         with:
@@ -120,14 +146,23 @@ jobs:
           asset_path: windows_build/windows_build.zip
           asset_name: xmrig-${{steps.version.outputs.VERSION}}-win64.zip
           asset_content_type: application/zip
-      - name: Upload Ubuntu build release asset
+      - name: Upload Ubuntu-22 build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ubuntu_build/ubuntu_build.tar.gz
-          asset_name: xmrig-${{steps.version.outputs.VERSION}}-lin64.tar.gz
+          asset_path: ubuntu-22_build/ubuntu-22_build.tar.gz
+          asset_name: xmrig-${{steps.version.outputs.VERSION}}-ubnt22.tar.gz
+          asset_content_type: application/zip
+      - name: Upload Ubuntu-20 build release asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ubuntu-20_build/ubuntu-20_build.tar.gz
+          asset_name: xmrig-${{steps.version.outputs.VERSION}}-ubnt20.tar.gz
           asset_content_type: application/zip
       - name: Upload MacOS build release asset
         uses: actions/upload-release-asset@v1.0.1
