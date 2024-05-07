@@ -103,7 +103,7 @@ jobs:
           upload_url: <span class="math-inline">\{\{ steps\.create\_release\.outputs\.upload\_url</3\> \}\}
 asset\_path\: windows\_build/windows\_build\.zip
 asset\_name\: xmrig\-</span>{{steps.version.outputs.VERSION}}-win64.zip
-          asset_content_
+          asset_content_type: application
       
       - name: Update xmrig_setup repo
         run: |
