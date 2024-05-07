@@ -2,9 +2,8 @@ on:
   push:
     branches:
       - master
-  pull_request:
-    branches:
-      - master
+    tags:
+      - 'v*'
 
 name: Create release and build artifacts
 
