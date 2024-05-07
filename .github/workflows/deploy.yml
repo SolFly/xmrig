@@ -111,7 +111,7 @@ jobs:
           path: centos8_build.tar.gz
 
   deploy:
-    needs: [build_win, build_lin, build_macos, build_lin_rh7]
+    needs: [build_win, build_lin, build_macos, build_lin_rh8]
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
