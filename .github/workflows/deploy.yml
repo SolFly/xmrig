@@ -108,14 +108,31 @@ jobs:
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Extract Version from version.h
+        id: extract_version
+        run: |
+          # Extract version from version.h file
+          version=$(grep -oP '#define APP_VERSION\s+"\K[^"]+' src/version.h)
+          echo "::set-output name=VERSION::$version"
+
+      - name: Build and Package
+        run: |
+          # Use the extracted version for building or any other build commands
+          version=${{ steps.extract_version.outputs.VERSION }}
+          echo "Building version $version"
+          # Add your build commands here using the extracted version
+
       - name: Create Release
-        id: create_release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: refs/tags/v6.21.3
-          release_name: Release ${{ github.ref }}
+          tag_name: v${{ steps.extract_version.outputs.VERSION }}
+          release_name: Release v${{ steps.extract_version.outputs.VERSION }}
           draft: false
           prerelease: false
       - name: Set version
