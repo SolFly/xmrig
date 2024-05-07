@@ -80,21 +80,22 @@ jobs:
           name: macos_build
           path: macos_build.tar.gz
 
+
   deploy:
     needs: [build_win, build_lin, build_macos]
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Create Release
-  id: create_release
-  uses: actions/create-release@v1
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  with:
-    tag_name: ${{ github.ref }}
-    release_name: ${{ github.ref }}
-    draft: false
-    prerelease: false
+        id: create_release
+        uses: actions/create-release@v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
       - name: Set version
         id: version
         run: echo ::set-output name=VERSION::${GITHUB_REF:10}
