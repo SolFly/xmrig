@@ -8,7 +8,7 @@ jobs:
     runs-on: windows-2019
     steps:
       - name: Checkout code
-        uses: actions/checkout@master
+        uses: actions/checkout@v2
       - name: Checkout deps
         run:  git clone https://github.com/xmrig/xmrig-deps.git
       - name: Build project on Windows
@@ -16,27 +16,20 @@ jobs:
           cmake . -G "MinGW Makefiles" -DXMRIG_DEPS=xmrig-deps\gcc\x64
           make -j2
 
-build_lin:
-  name: Ubuntu build
-  runs-on: ubuntu-latest
-  strategy:
-    matrix:
-      ubuntu_version: ['20.04', '22.04']
-  steps:
-    - name: Prepare Ubuntu tools
-      run: |
-        sudo apt update
-        sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev
-    - name: Checkout code
-      uses: actions/checkout@v2
-    - name: Build project on Ubuntu 20.04
-      if: matrix.ubuntu_version == '20.04'
-      run: |
-        cmake .
-        make -j$(nproc)
-    - name: Build project on Ubuntu 22.04
-      if: matrix.ubuntu_version == '22.04'
-      run: |
-        cmake .
-        make -j$(nproc)
-
+  build_lin:
+    name: Ubuntu build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu_version: ['20.04', '22.04']
+    steps:
+      - name: Prepare Ubuntu tools
+        run: |
+          sudo apt update
+          sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Build project on Ubuntu
+        run: |
+          cmake .
+          make -j$(nproc)
