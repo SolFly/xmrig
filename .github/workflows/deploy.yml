@@ -143,7 +143,7 @@ jobs:
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/xmrig_setup.git
           cd xmrig_setup
           git config user.name  SolFly
-          git config user.email info@fastpool.info
+          git config user.email SolFly86@gmail.com
           cp ../windows_build/windows_build.zip xmrig.zip
           unzip xmrig.zip
           zip -u offline_miner_setup.zip xmrig.exe config.json WinRing0x64.sys
@@ -155,7 +155,7 @@ jobs:
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/hiveos.git
           cd hiveos
           git config user.name  SolFly
-          git config user.email info@fastpool.info
+          git config user.email SolFly86@gmail.com
           mv xmrig mo_xmrig/xmrig
           mv config.json mo_xmrig/config_global.json
           export VER=${GITHUB_REF:10}
