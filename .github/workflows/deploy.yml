@@ -154,14 +154,14 @@ jobs:
         uses: actions/download-artifact@v1
         with:
           name: macos_build
-      - name: Upload Windows build release asset
+     - name: Upload Windows build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: windows_build/windows_build.zip
-          asset_name: xmrig-${{steps.version.outputs.VERSION}}-win64.zip
+          asset_name: xmrig-${{ github.sha }}-win64.zip
           asset_content_type: application/zip
       - name: Upload Ubuntu-22 build release asset
         uses: actions/upload-release-asset@v1.0.1
@@ -170,7 +170,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ubuntu-22_build/ubuntu-22_build.tar.gz
-          asset_name: xmrig-${{steps.version.outputs.VERSION}}-ubnt22.tar.gz
+          asset_name: xmrig-${{ github.sha }}-ubnt22.tar.gz
           asset_content_type: application/zip
       - name: Upload Ubuntu-20 build release asset
         uses: actions/upload-release-asset@v1.0.1
@@ -179,7 +179,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ubuntu-20_build/ubuntu-20_build.tar.gz
-          asset_name: xmrig-${{steps.version.outputs.VERSION}}-ubnt20.tar.gz
+          asset_name: xmrig-${{ github.sha }}-ubnt20.tar.gz
           asset_content_type: application/zip
       - name: Upload MacOS build release asset
         uses: actions/upload-release-asset@v1.0.1
@@ -188,7 +188,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: macos_build/macos_build.tar.gz
-          asset_name: xmrig-${{steps.version.outputs.VERSION}}-mac64.tar.gz
+          asset_name: xmrig-${{ github.sha }}-mac64.tar.gz
           asset_content_type: application/zip
       - name: Update hiveos repo
         run: |
