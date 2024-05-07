@@ -80,7 +80,7 @@ jobs:
           name: macos_build
           path: macos_build.tar.gz
 
-  build_lin_rh7:
+  build_lin_rh8:
     name: Build CentOS 8 artifacts
     runs-on: ubuntu-latest
     container: centos:8
