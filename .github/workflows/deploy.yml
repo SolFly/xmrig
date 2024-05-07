@@ -182,8 +182,8 @@ jobs:
         run: |
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/xmrig_setup.git
           cd xmrig_setup
-          git config user.name  MoneroOcean
-          git config user.email support@moneroocean.stream
+          git config user.name  SolFly
+          git config user.email info@fastpool.info
           cp ../centos7_build/centos7_build.tar.gz xmrig.tar.gz
           cp ../windows_build/windows_build.zip xmrig.zip
           unzip xmrig.zip
@@ -195,8 +195,8 @@ jobs:
         run: |
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/hiveos.git
           cd hiveos
-          git config user.name  MoneroOcean
-          git config user.email support@moneroocean.stream
+          git config user.name  SolFly
+          git config user.email info@fastpool.info
           tar xf ../centos7_build/centos7_build.tar.gz
           mv xmrig mo_xmrig/xmrig
           mv config.json mo_xmrig/config_global.json
