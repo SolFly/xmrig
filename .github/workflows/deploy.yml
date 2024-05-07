@@ -1,109 +1,89 @@
+name: Create release and build artifacts
+
 on:
   push:
     branches:
       - master
-  tags:
-    - 'v*'
+    tags:
+      - 'v*'
 
-name: Create Release and Build Artifacts
+env:
+  BUILD_DEPS: https://github.com/xmrig/xmrig-deps.git
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  build_win:
-    name: Build Windows artifacts
-    runs-on: windows-latest  # Switched to windows-latest for wider compatibility
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-2019
+            artifact_name: windows_build
+            asset_name: xmrig-${{steps.version.outputs.VERSION}}-win64.zip
+            asset_path: windows_build/windows_build.zip
+            build_steps: |
+              cmake . -G "MinGW Makefiles" -DXMRIG_DEPS=xmrig-deps\gcc\x64
+              make -j2
+              copy src\config.json .
+              copy bin\WinRing0\WinRing0x64.sys .
+              7z a -tzip -mx windows_build.zip xmrig.exe config.json WinRing0x64.sys
+          - os: ubuntu-22.04
+            artifact_name: ubuntu_build
+            asset_name: xmrig-${{steps.version.outputs.VERSION}}-lin64.tar.gz
+            asset_path: ubuntu_build/ubuntu_build.tar.gz
+            build_steps: |
+              cmake .
+              make -j$(nproc)
+              cp src/config.json .
+              tar cfz ubuntu_build.tar.gz xmrig config.json
+          - os: macos-latest
+            artifact_name: macos_build
+            asset_name: xmrig-${{steps.version.outputs.VERSION}}-mac64.tar.gz
+            asset_path: macos_build/macos_build.tar.gz
+            build_steps: |
+              cmake . -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl -DHWLOC_INCLUDE_DIR=hwloc-2.1.0/include -DHWLOC_LIBRARY=hwloc-2.1.0/hwloc/.libs/libhwloc.a
+              make -j$(sysctl -n hw.logicalcpu)
+              cp src/config.json .
+              tar cfz macos_build.tar.gz xmrig config.json
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
       - name: Checkout deps
-        run: git clone https://github.com/xmrig/xmrig-deps.git
-      - name: Build project on Windows
-        run: |
-          cmake . -G "MinGW Makefiles" -DXMRIG_DEPS=xmrig-deps\gcc\x64
-          make -j2
-          copy src\config.json .
-          copy bin\WinRing0\WinRing0x64.sys .
-          7z a -tzip -mx windows_build.zip xmrig.exe config.json WinRing0x64.sys
-      - uses: actions/upload-artifact@v2
+        run: git clone ${{ env.BUILD_DEPS }}
+      - name: Build project
+        run: ${{ matrix.build_steps }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v2
         with:
-          name: windows_build
-          path: windows_build.zip
-
-  build_lin:
-    name: Build Ubuntu artifacts
-    runs-on: ubuntu-latest
-    steps:
-      - name: Prepare Ubuntu tools
-        run: |
-          sudo apt update
-          sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev
-      - uses: actions/checkout@v2
-      - name: Build project on Ubuntu
-        run: |
-          cmake .
-          make -j$(nproc)
-          cp src/config.json .
-          tar cfz ubuntu_build.tar.gz xmrig config.json
-      - uses: actions/upload-artifact@v2
-        with:
-          name: ubuntu_build
-          path: ubuntu_build.tar.gz
-
-  build_macos:
-    name: Build MacOS artifacts
-    runs-on: macos-latest
-    steps:
-      - name: Prepare MacOS tools
-        run: brew install cmake libuv openssl hwloc  # Removed unnecessary space
-      - uses: actions/checkout@v2
-      - name: Build project on MacOS (using pre-built hwloc)
-        # Removed manual hwloc build step and referenced system library
-        run: |
-          cmake . -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl -DHWLOC_INCLUDE_DIR=/usr/local/opt/hwloc/include -DHWLOC_LIBRARY=/usr/local/opt/hwloc/lib/libhwloc.dylib
-          make -j$(sysctl -n hw.logicalcpu)
-          cp src/config.json .
-          tar cfz macos_build.tar.gz xmrig config.json
-      - uses: actions/upload-artifact@v2
-        with:
-          name: macos_build
-          path: macos_build.tar.gz
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_path }}
 
   deploy:
-    needs: [build_win, build_lin, build_macos]
-    name: Create release and upload artifacts
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - id: version
+      - name: Set version
+        id: version
         run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
-        
-      - id: create_release
+      - name: Create Release
+        id: create_release
         uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           release_name: Release ${{ steps.version.outputs.VERSION }}
           draft: false
           prerelease: false
-      
-      - uses: actions/download-artifact@v2
+      - name: Download build artifacts
+        uses: actions/download-artifact@v2
         with:
-          name: windows_build
-      
-      - uses: actions/download-artifact@v2
+          name: ${{ matrix.artifact_name }}
+      - name: Upload build release asset
+        uses: actions/upload-release-asset@v1
         with:
-          name: ubuntu_build
-      
-      - uses: actions/download-artifact@v2
-        with:
-          name: macos_build
-      
-      - uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: <span class="math-inline">\{\{ steps\.create\_release\.outputs\.upload\_url</3\> \}\}
-asset\_path\: windows\_build/windows\_build\.zip
-asset\_name\: xmrig\-</span>{{steps.version.outputs.VERSION}}-win64.zip
-          asset_content_type: application
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ matrix.asset_path }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/zip
       
       - name: Update xmrig_setup repo
         run: |
