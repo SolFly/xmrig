@@ -104,33 +104,57 @@ jobs:
 
 
   deploy:
-    needs: [Make_GitHub_Release]
-    name: Upload artifacts
+    needs: [build_win, build_ubnt-22, build_ubnt-20, build_macos]
+    name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
+      - name: Extract Version from version.h
+        id: extract_version
+        run: |
+          # Extract version from version.h file
+          version=$(grep -oP '#define APP_VERSION\s+"\K[^"]+' src/version.h)
+          echo "::set-output name=VERSION::$version"
+
+      - name: Build and Package
+        run: |
+          # Use the extracted version for building or any other build commands
+          version=${{ steps.extract_version.outputs.VERSION }}
+          echo "Building version $version"
+          # Add your build commands here using the extracted version
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.extract_version.outputs.VERSION }}
+          release_name: Release v${{ steps.extract_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+      - name: Set version
+        id: version
+        run: echo ::set-output name=VERSION::${GITHUB_REF:10}
       - name: Download Windows build artifacts
         uses: actions/download-artifact@v1
         with:
           name: windows_build
-
       - name: Download Ubuntu-22 build artifacts
         uses: actions/download-artifact@v1
         with:
           name: ubuntu-22_build
-
       - name: Download Ubuntu-20 build artifacts
         uses: actions/download-artifact@v1
         with:
           name: ubuntu-20_build
-
       - name: Download MacOS build artifacts
         uses: actions/download-artifact@v1
         with:
           name: macos_build
-
+ 
       - name: Upload Windows build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
@@ -170,6 +194,7 @@ jobs:
           asset_path: macos_build/macos_build.tar.gz
           asset_name: xmrig-${{ steps.version.outputs.VERSION }}-macos.tar.gz
           asset_content_type: application/zip
+          
       - name: Update hiveos repo
         run: |
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/hiveos.git
