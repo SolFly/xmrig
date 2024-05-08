@@ -8,6 +8,19 @@ on:
 name: Create release and build artifacts
 
 jobs:
+  Make_GitHub_Release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.step_version.outputs.version }}
+      upload_url: ${{ steps.step_upload_url.outputs.upload_url }}
+    steps:
+      - id: step_version
+        run: echo "::set-output name=version::${{ steps.package_version.outputs.version }}"
+        
+      - id: step_upload_url
+        run: echo "::set-output name=upload_url::${{ steps.create_release.outputs.upload_url }}"
+
   build_win:
     name: Build Windows artifacts
     runs-on: windows-2019
@@ -104,7 +117,7 @@ jobs:
 
 
   deploy:
-    needs: [build_win, build_ubnt-22, build_ubnt-20, build_macos]
+    needs: [Make_GitHub_Release, build_win, build_ubnt-22, build_ubnt-20, build_macos]
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
@@ -154,7 +167,6 @@ jobs:
         uses: actions/download-artifact@v1
         with:
           name: macos_build
- 
       - name: Upload Windows build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
@@ -162,9 +174,8 @@ jobs:
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: windows_build/windows_build.zip
-          asset_name: xmrig-${{ steps.version.outputs.VERSION }}-win64.zip
+          asset_name: windows_build.zip
           asset_content_type: application/zip
-
       - name: Upload Ubuntu-22 build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
@@ -172,9 +183,8 @@ jobs:
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: ubuntu-22_build/ubuntu-22_build.tar.gz
-          asset_name: xmrig-${{ steps.version.outputs.VERSION }}-ubuntu-22.tar.gz
+          asset_name: ubuntu-22_build.tar.gz
           asset_content_type: application/zip
-
       - name: Upload Ubuntu-20 build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
@@ -182,9 +192,8 @@ jobs:
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: ubuntu-20_build/ubuntu-20_build.tar.gz
-          asset_name: xmrig-${{ steps.version.outputs.VERSION }}-ubuntu-20.tar.gz
+          asset_name: ubuntu-20_build.tar.gz
           asset_content_type: application/zip
-
       - name: Upload MacOS build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
@@ -192,9 +201,8 @@ jobs:
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: macos_build/macos_build.tar.gz
-          asset_name: xmrig-${{ steps.version.outputs.VERSION }}-macos.tar.gz
+          asset_name: macos_build.tar.gz
           asset_content_type: application/zip
-          
       - name: Update hiveos repo
         run: |
           git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/hiveos.git
