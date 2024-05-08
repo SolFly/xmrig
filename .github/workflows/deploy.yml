@@ -142,7 +142,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
         with:
           tag_name: v${{ steps.extract_version.outputs.VERSION }}
           release_name: Release v${{ steps.extract_version.outputs.VERSION }}
@@ -170,7 +170,7 @@ jobs:
       - name: Upload Windows build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: windows_build/windows_build.zip
@@ -179,7 +179,7 @@ jobs:
       - name: Upload Ubuntu-22 build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: ubuntu-22_build/ubuntu-22_build.tar.gz
@@ -188,7 +188,7 @@ jobs:
       - name: Upload Ubuntu-20 build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: ubuntu-20_build/ubuntu-20_build.tar.gz
@@ -197,7 +197,7 @@ jobs:
       - name: Upload MacOS build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
           asset_path: macos_build/macos_build.tar.gz
