@@ -1,26 +1,11 @@
 on:
   push:
-    branches:
-      - master
     tags:
     - 'v*'
 
 name: Create release and build artifacts
 
 jobs:
-  Make_GitHub_Release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.step_version.outputs.version }}
-      upload_url: ${{ steps.step_upload_url.outputs.upload_url }}
-    steps:
-      - id: step_version
-        run: echo "::set-output name=version::${{ steps.package_version.outputs.version }}"
-        
-      - id: step_upload_url
-        run: echo "::set-output name=upload_url::${{ steps.create_release.outputs.upload_url }}"
-
   build_win:
     name: Build Windows artifacts
     runs-on: windows-2019
@@ -42,8 +27,8 @@ jobs:
           name: windows_build
           path: windows_build.zip
 
-  build_ubnt-22:
-    name: Build Ubuntu-22
+  build_lin:
+    name: Build Ubuntu artifacts
     runs-on: ubuntu-22.04
     steps:
       - name: Prepare Ubuntu tools
@@ -57,34 +42,12 @@ jobs:
           cmake .
           make -j$(nproc)
           cp src/config.json .
-          tar cfz ubuntu-22_build.tar.gz xmrig config.json
+          tar cfz ubuntu_build.tar.gz xmrig config.json
       - name: Upload Ubuntu build artifacts
         uses: actions/upload-artifact@v1
         with:
-          name: ubuntu-22_build
-          path: ubuntu-22_build.tar.gz
-          
-  build_ubnt-20:
-    name: Build Ubuntu-20
-    runs-on: ubuntu-20.04
-    steps:
-      - name: Prepare Ubuntu tools
-        run: |
-          sudo apt update
-          sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev
-      - name: Checkout code
-        uses: actions/checkout@master
-      - name: Build project on Ubuntu
-        run: |
-          cmake .
-          make -j$(nproc)
-          cp src/config.json .
-          tar cfz ubuntu-20_build.tar.gz xmrig config.json
-      - name: Upload Ubuntu build artifacts
-        uses: actions/upload-artifact@v1
-        with:
-          name: ubuntu-20_build
-          path: ubuntu-20_build.tar.gz
+          name: ubuntu_build
+          path: ubuntu_build.tar.gz
 
   build_macos:
     name: Build MacOS artifacts
@@ -115,37 +78,19 @@ jobs:
           name: macos_build
           path: macos_build.tar.gz
 
-
   deploy:
-    needs: [Make_GitHub_Release, build_win, build_ubnt-22, build_ubnt-20, build_macos]
+    needs: [build_win, build_lin, build_macos]
     name: Create release and upload artifacts
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Extract Version from version.h
-        id: extract_version
-        run: |
-          # Extract version from version.h file
-          version=$(grep -oP '#define APP_VERSION\s+"\K[^"]+' src/version.h)
-          echo "::set-output name=VERSION::$version"
-
-      - name: Build and Package
-        run: |
-          # Use the extracted version for building or any other build commands
-          version=${{ steps.extract_version.outputs.VERSION }}
-          echo "Building version $version"
-          # Add your build commands here using the extracted version
-
       - name: Create Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: actions/create-release@v1
+        id: create_release
+        uses: actions/create-release@v1.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ steps.extract_version.outputs.VERSION }}
-          release_name: Release v${{ steps.extract_version.outputs.VERSION }}
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
       - name: Set version
@@ -155,14 +100,10 @@ jobs:
         uses: actions/download-artifact@v1
         with:
           name: windows_build
-      - name: Download Ubuntu-22 build artifacts
+      - name: Download Ubuntu build artifacts
         uses: actions/download-artifact@v1
         with:
-          name: ubuntu-22_build
-      - name: Download Ubuntu-20 build artifacts
-        uses: actions/download-artifact@v1
-        with:
-          name: ubuntu-20_build
+          name: ubuntu_build
       - name: Download MacOS build artifacts
         uses: actions/download-artifact@v1
         with:
@@ -170,50 +111,27 @@ jobs:
       - name: Upload Windows build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: windows_build/windows_build.zip
-          asset_name: windows_build.zip
+          asset_name: xmrig-${{steps.version.outputs.VERSION}}-win64.zip
           asset_content_type: application/zip
-      - name: Upload Ubuntu-22 build release asset
+      - name: Upload Ubuntu build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
-          asset_path: ubuntu-22_build/ubuntu-22_build.tar.gz
-          asset_name: ubuntu-22_build.tar.gz
-          asset_content_type: application/zip
-      - name: Upload Ubuntu-20 build release asset
-        uses: actions/upload-release-asset@v1.0.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
-          asset_path: ubuntu-20_build/ubuntu-20_build.tar.gz
-          asset_name: ubuntu-20_build.tar.gz
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ubuntu_build/ubuntu_build.tar.gz
+          asset_name: xmrig-${{steps.version.outputs.VERSION}}-lin64.tar.gz
           asset_content_type: application/zip
       - name: Upload MacOS build release asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.Make_GitHub_Release.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: macos_build/macos_build.tar.gz
-          asset_name: macos_build.tar.gz
+          asset_name: xmrig-${{steps.version.outputs.VERSION}}-mac64.tar.gz
           asset_content_type: application/zip
-      - name: Update hiveos repo
-        run: |
-          git clone https://$GITHUB_ACTOR:${{secrets.xmrig_setup_key}}@github.com/SolFly/hiveos.git
-          cd hiveos
-          git config user.name  SolFly
-          git config user.email SolFly86@gmail.com
-          mv xmrig mo_xmrig/xmrig
-          mv config.json mo_xmrig/config_global.json
-          export VER=${GITHUB_REF:10}
-          export VER=${VER//-/_}
-          tar -zcvf mo_xmrig-$VER.tar.gz mo_xmrig
-          git add mo_xmrig-$VER.tar.gz mo_xmrig/xmrig mo_xmrig/config_global.json
-          git commit -m "xmrig "${GITHUB_REF:10}" based release" mo_xmrig-$VER.tar.gz
-          git push
