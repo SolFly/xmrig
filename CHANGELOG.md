@@ -1,3 +1,18 @@
+# v6.22.1
+- [#3531](https://github.com/xmrig/xmrig/pull/3531) Always reset nonce on RandomX dataset change.
+- [#3534](https://github.com/xmrig/xmrig/pull/3534) Fixed threads auto-config on Zen5.
+- [#3535](https://github.com/xmrig/xmrig/pull/3535) RandomX: tweaks for Zen5.
+- [#3539](https://github.com/xmrig/xmrig/pull/3539) Added Zen5 to `randomx_boost.sh`.
+- [#3540](https://github.com/xmrig/xmrig/pull/3540) Detect AMD engineering samples in `randomx_boost.sh`.
+
+# v6.22.0
+- [#2411](https://github.com/xmrig/xmrig/pull/2411) Added support for [Yada](https://yadacoin.io/) (`rx/yada` algorithm).
+- [#3492](https://github.com/xmrig/xmrig/pull/3492) Fixed `--background` option on Unix systems.
+- [#3518](https://github.com/xmrig/xmrig/pull/3518) Possible fix for corrupted API output in rare cases.
+- [#3522](https://github.com/xmrig/xmrig/pull/3522) Removed `rx/keva` algorithm.
+- [#3525](https://github.com/xmrig/xmrig/pull/3525) Added Zen5 detection.
+- [#3528](https://github.com/xmrig/xmrig/pull/3528) Added `rx/yada` OpenCL support.
+
 # v6.21.3
 - [#3462](https://github.com/xmrig/xmrig/pull/3462) RandomX: correct memcpy size for JIT initialization.
 
