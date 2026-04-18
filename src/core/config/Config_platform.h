@@ -1,24 +1,11 @@
 /* XMRig
- * Copyright (c) 2018-2021 SChernykh   <https://github.com/SChernykh>
- * Copyright (c) 2016-2021 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright (c) 2018-2026 SChernykh   <https://github.com/SChernykh>
+ * Copyright (c) 2016-2026 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
- *   This program is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation, either version 3 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#ifndef XMRIG_CONFIG_PLATFORM_H
-#define XMRIG_CONFIG_PLATFORM_H
-
+#pragma once
 
 #ifdef _MSC_VER
 #   include "getopt/getopt.h"
@@ -28,13 +15,12 @@
 
 
 #include "base/kernel/interfaces/IConfig.h"
-#include "version.h"
 
 
 namespace xmrig {
 
 
-static const char short_options[] = "a:c:kBp:Px:r:R:s:t:T:o:u:O:v:l:Sx:";
+static const char short_options[] = "a:c:kBp:x:r:R:s:t:T:o:u:O:v:l:S46";
 
 
 static const option options[] = {
@@ -104,7 +90,8 @@ static const option options[] = {
     { "no-title",              0, nullptr, IConfig::NoTitleKey            },
     { "pause-on-battery",      0, nullptr, IConfig::PauseOnBatteryKey     },
     { "pause-on-active",       1, nullptr, IConfig::PauseOnActiveKey      },
-    { "dns-ipv6",              0, nullptr, IConfig::DnsIPv6Key            },
+    { "ipv4",                  0, nullptr, IConfig::DnsIPv4Key            },
+    { "ipv6",                  0, nullptr, IConfig::DnsIPv6Key            },
     { "dns-ttl",               1, nullptr, IConfig::DnsTtlKey             },
     { "spend-secret-key",      1, nullptr, IConfig::SpendSecretKey        },
 #   ifdef XMRIG_FEATURE_BENCHMARK
@@ -174,6 +161,3 @@ static const option options[] = {
 
 
 } // namespace xmrig
-
-
-#endif /* XMRIG_CONFIG_PLATFORM_H */

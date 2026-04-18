@@ -174,7 +174,7 @@ FORCE_INLINE void rx_set_rounding_mode(uint32_t mode) {
 	_mm_setcsr(rx_mxcsr_default | (mode << 13));
 }
 
-#elif defined(__PPC64__) && defined(__ALTIVEC__) && defined(__VSX__) //sadly only POWER7 and newer will be able to use SIMD acceleration. Earlier processors cant use doubles or 64 bit integers with SIMD
+#elif defined(__PPC64__) && defined(__ALTIVEC__) && defined(__VSX__) //sadly only POWER7 and newer will be able to use SIMD acceleration. Earlier processors can't use doubles or 64 bit integers with SIMD
 #include <cstdint>
 #include <stdexcept>
 #include <cstdlib>
@@ -200,7 +200,18 @@ typedef union{
 	int i32[4];
 } vec_u;
 
-#define rx_aligned_alloc(a, b) malloc(a)
+#ifdef HAVE_POSIX_MEMALIGN
+inline void* rx_aligned_alloc(size_t size, size_t align) {
+    void* p;
+    if (posix_memalign(&p, align, size) == 0)
+        return p;
+
+    return 0;
+};
+#else
+#   define rx_aligned_alloc(a, b) malloc(a)
+#endif
+
 #define rx_aligned_free(a) free(a)
 #define rx_prefetch_nta(x)
 #define rx_prefetch_t0(x)
@@ -392,17 +403,24 @@ FORCE_INLINE rx_vec_f128 rx_cvt_packed_int_vec_f128(const void* addr) {
 typedef uint8x16_t rx_vec_i128;
 typedef float64x2_t rx_vec_f128;
 
+#ifdef HAVE_POSIX_MEMALIGN
 inline void* rx_aligned_alloc(size_t size, size_t align) {
-	void* p;
-	if (posix_memalign(&p, align, size) == 0)
-		return p;
+    void* p;
+    if (posix_memalign(&p, align, size) == 0)
+        return p;
 
-	return 0;
+    return 0;
 };
+#   define rx_aligned_free(a) free(a)
+#elif defined(HAVE_ALIGNED_MALLOC)
+#   define rx_aligned_alloc(a, b) _aligned_malloc(a, b)
+#   define rx_aligned_free(a) _aligned_free(a)
+#else
+#   define rx_aligned_alloc(a, b) malloc(a)
+#   define rx_aligned_free(a) free(a)
+#endif
 
-#define rx_aligned_free(a) free(a)
-
-inline void rx_prefetch_nta(void* ptr) {
+inline void rx_prefetch_nta(const void* ptr) {
 	asm volatile ("prfm pldl1strm, [%0]\n" : : "r" (ptr));
 }
 
@@ -542,10 +560,30 @@ typedef union {
 	rx_vec_i128 i;
 } rx_vec_f128;
 
-#define rx_aligned_alloc(a, b) malloc(a)
-#define rx_aligned_free(a) free(a)
+#ifdef HAVE_POSIX_MEMALIGN
+inline void* rx_aligned_alloc(size_t size, size_t align) {
+    void* p;
+    if (posix_memalign(&p, align, size) == 0)
+        return p;
+
+    return 0;
+};
+#   define rx_aligned_free(a) free(a)
+#elif defined(HAVE_ALIGNED_MALLOC)
+#   define rx_aligned_alloc(a, b) _aligned_malloc(a, b)
+#   define rx_aligned_free(a) _aligned_free(a)
+#else
+#   define rx_aligned_alloc(a, b) malloc(a)
+#   define rx_aligned_free(a) free(a)
+#endif
+
+#if defined(__GNUC__) && (!defined(__clang__) || __has_builtin(__builtin_prefetch))
+#define rx_prefetch_nta(x) __builtin_prefetch((x), 0, 0)
+#define rx_prefetch_t0(x) __builtin_prefetch((x), 0, 3)
+#else
 #define rx_prefetch_nta(x)
 #define rx_prefetch_t0(x)
+#endif
 
 FORCE_INLINE rx_vec_f128 rx_load_vec_f128(const double* pd) {
 	rx_vec_f128 x;

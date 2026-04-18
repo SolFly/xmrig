@@ -39,6 +39,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "crypto/randomx/jit_compiler_x86_static.hpp"
 #elif (XMRIG_ARM == 8)
 #include "crypto/randomx/jit_compiler_a64_static.hpp"
+#elif defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 64)
+#include "crypto/randomx/jit_compiler_rv64_static.hpp"
 #endif
 
 #include "backend/cpu/Cpu.h"
@@ -53,6 +55,17 @@ extern "C" {
 }
 
 #include "crypto/rx/Profiler.h"
+#include "base/net/stratum/Job.h"
+
+RandomX_ConfigurationMoneroV2::RandomX_ConfigurationMoneroV2()
+{
+	ProgramSize = 384;
+
+	Tweak_V2_CFROUND = 1;
+	Tweak_V2_AES = 1;
+	Tweak_V2_PREFETCH = 1;
+	Tweak_V2_COMMITMENT = 1;
+}
 
 RandomX_ConfigurationWownero::RandomX_ConfigurationWownero()
 {
@@ -191,6 +204,10 @@ RandomX_ConfigurationBase::RandomX_ConfigurationBase()
 	, RANDOMX_FREQ_CFROUND(1)
 	, RANDOMX_FREQ_ISTORE(16)
 	, RANDOMX_FREQ_NOP(0)
+	, Tweak_V2_CFROUND(0)
+	, Tweak_V2_AES(0)
+	, Tweak_V2_PREFETCH(0)
+	, Tweak_V2_COMMITMENT(0)
 {
 	fillAes4Rx4_Key[0] = rx_set_int_vec_i128(0x99e5d23f, 0x2f546d2b, 0xd1833ddb, 0x6421aadd);
 	fillAes4Rx4_Key[1] = rx_set_int_vec_i128(0xa5dfcde5, 0x06f79d53, 0xb6913f55, 0xb20e3450);
@@ -220,15 +237,15 @@ RandomX_ConfigurationBase::RandomX_ConfigurationBase()
 	}
 	{
 		const uint8_t* a = addr(randomx_program_read_dataset);
-		const uint8_t* b = addr(randomx_program_read_dataset_ryzen);
+		const uint8_t* b = addr(randomx_program_read_dataset_v2);
 		memcpy(codeReadDatasetTweaked, a, b - a);
 		codeReadDatasetTweakedSize = b - a;
 	}
 	{
-		const uint8_t* a = addr(randomx_program_read_dataset_ryzen);
+		const uint8_t* a = addr(randomx_program_read_dataset_v2);
 		const uint8_t* b = addr(randomx_program_read_dataset_sshash_init);
-		memcpy(codeReadDatasetRyzenTweaked, a, b - a);
-		codeReadDatasetRyzenTweakedSize = b - a;
+		memcpy(codeReadDatasetV2Tweaked, a, b - a);
+		codeReadDatasetV2TweakedSize = b - a;
 	}
 	if (xmrig::Cpu::info()->hasBMI2()) {
 		const uint8_t* a = addr(randomx_prefetch_scratchpad_bmi2);
@@ -245,7 +262,7 @@ RandomX_ConfigurationBase::RandomX_ConfigurationBase()
 #	endif
 }
 
-#if (XMRIG_ARM == 8)
+#if (XMRIG_ARM == 8) || defined(XMRIG_RISCV)
 static uint32_t Log2(size_t value) { return (value > 1) ? (Log2(value / 2) + 1) : 0; }
 #endif
 
@@ -271,11 +288,11 @@ void RandomX_ConfigurationBase::Apply()
         CacheLineAlignMask_Calculated = (DatasetBaseSize - 1) & ~(RANDOMX_DATASET_ITEM_SIZE - 1);
 
 #if defined(XMRIG_FEATURE_ASM) && (defined(_M_X64) || defined(__x86_64__))
-	*(uint32_t*)(codeShhPrefetchTweaked + 3) = ArgonMemory * 16 - 1;
+	*(uint32_t*)(codeSshPrefetchTweaked + 3) = ArgonMemory * 16 - 1;
 	*(uint32_t*)(codeSshPrefetchTweaked + 3) = ArgonMemory * 16 - 1;
 	const uint32_t DatasetBaseMask = DatasetBaseSize - RANDOMX_DATASET_ITEM_SIZE;
-	*(uint32_t*)(codeReadDatasetRyzenTweaked + 9) = DatasetBaseMask;
-	*(uint32_t*)(codeReadDatasetRyzenTweaked + 24) = DatasetBaseMask;
+	*(uint32_t*)(codeReadDatasetV2Tweaked + 9) = DatasetBaseMask;
+	*(uint32_t*)(codeReadDatasetV2Tweaked + 24) = DatasetBaseMask;
 	*(uint32_t*)(codeReadDatasetTweaked + 7) = DatasetBaseMask;
 	*(uint32_t*)(codeReadDatasetTweaked + 23) = DatasetBaseMask;
 //	*(uint32_t*)(codeReadDatasetLightSshInitTweaked + 59) = DatasetBaseMask;
@@ -331,6 +348,17 @@ typedef void(randomx::JitCompilerX86::* InstructionGeneratorX86_2)(const randomx
 	Log2_CacheSize = Log2((ArgonMemory * randomx::ArgonBlockSize) / randomx::CacheLineSize);
 
 #define JIT_HANDLE(x, prev) randomx::JitCompilerA64::engine[k] = &randomx::JitCompilerA64::h_##x
+
+#elif defined(XMRIG_RISCV)
+
+	Log2_ScratchpadL1 = Log2(ScratchpadL1_Size);
+	Log2_ScratchpadL2 = Log2(ScratchpadL2_Size);
+	Log2_ScratchpadL3 = Log2(ScratchpadL3_Size);
+
+#define JIT_HANDLE(x, prev) do { \
+		randomx::JitCompilerRV64::engine[k] = &randomx::JitCompilerRV64::v1_##x; \
+		randomx::JitCompilerRV64::inst_map[k] = static_cast<uint8_t>(randomx::InstructionType::x); \
+	} while (0)
 
 #else
 #define JIT_HANDLE(x, prev)
@@ -412,6 +440,7 @@ typedef void(randomx::JitCompilerX86::* InstructionGeneratorX86_2)(const randomx
 }
 
 RandomX_ConfigurationMonero RandomX_MoneroConfig;
+RandomX_ConfigurationMoneroV2 RandomX_MoneroConfigV2;
 RandomX_ConfigurationWownero RandomX_WowneroConfig;
 RandomX_ConfigurationArqma RandomX_ArqmaConfig;
 RandomX_ConfigurationEquilibria RandomX_EquilibriaConfig;
@@ -677,6 +706,13 @@ extern "C" {
 		    default: rx_blake2b_wrapper::run(tempHash, sizeof(tempHash), nextInput, nextInputSize);
 		}
 		machine->hashAndFill(output, tempHash);
+	}
+
+	void randomx_calculate_commitment(const void* input, size_t inputSize, const void* hash_in, void* com_out) {
+		uint8_t buf[xmrig::Job::kMaxBlobSize + RANDOMX_HASH_SIZE];
+		memcpy(buf, input, inputSize);
+		memcpy(buf + inputSize, hash_in, RANDOMX_HASH_SIZE);
+		rx_blake2b_wrapper::run(com_out, RANDOMX_HASH_SIZE, buf, inputSize + RANDOMX_HASH_SIZE);
 	}
 
 }
